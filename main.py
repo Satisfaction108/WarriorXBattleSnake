@@ -218,6 +218,8 @@ def info() -> typing.Dict:
 
 def start(game_state: typing.Dict):
     """Called when game starts"""
+    global recent_moves
+    recent_moves = []  # Reset move history for new game
     print("GAME START")
 
 
@@ -1071,20 +1073,26 @@ def evaluate_move(direction: str, game_state: dict, use_prediction: bool = True)
         score += available_space * 2  # Extra space bonus
         reasons.append(f"🛡️  DEFENSIVE: Space priority (+{available_space * 2})")
 
-    # CENTER CONTROL
+    # CENTER CONTROL (reduced to avoid predictable movement patterns)
     center_x = board_width // 2
     center_y = board_height // 2
     distance_from_center = manhattan_distance(new_head, {"x": center_x, "y": center_y})
-    score += (20 - distance_from_center) * 5
+    # Reduced from *5 to *2 to make movement less predictable
+    score += (20 - distance_from_center) * 2
 
     return {"score": score, "reasons": reasons, "direction": direction}
 
+
+# Global variable to track recent moves (for anti-pattern detection)
+recent_moves = []
 
 def move(game_state: typing.Dict) -> typing.Dict:
     """
     Main move function with advanced prediction and evaluation.
     Uses minimax search with 20-move lookahead.
     """
+    global recent_moves
+
     # Get all possible moves (using helper function for consistency)
     my_head = game_state["you"]["body"][0]
     board_width = game_state["board"]["width"]
@@ -1106,14 +1114,35 @@ def move(game_state: typing.Dict) -> typing.Dict:
     move_evaluations = []
     for direction in possible_moves:
         evaluation = evaluate_move(direction, game_state, use_prediction=True)
+
+        # ANTI-PATTERN: Penalize repeating the same direction too many times
+        if len(recent_moves) >= 3:
+            last_3_moves = recent_moves[-3:]
+            if last_3_moves.count(direction) >= 2:
+                # Penalize if this direction was used 2+ times in last 3 moves
+                pattern_penalty = -200
+                evaluation["score"] += pattern_penalty
+                evaluation["reasons"].append(f"⚠️  PATTERN: Repeated {direction} too much ({pattern_penalty})")
+
         move_evaluations.append(evaluation)
 
     # Sort by score (highest first)
     move_evaluations.sort(key=lambda x: x["score"], reverse=True)
 
+    # ANTI-PREDICTABILITY: If top moves have similar scores, randomize to avoid patterns
+    import random
+    best_score = move_evaluations[0]["score"]
+    similar_moves = [m for m in move_evaluations if abs(m["score"] - best_score) < 50]
+
+    if len(similar_moves) > 1:
+        print(f"🎲 Multiple good moves (within 50 points): {[m['direction'] for m in similar_moves]}")
+        best_move = random.choice(similar_moves)
+        print(f"   Randomly chose: {best_move['direction'].upper()}")
+    else:
+        best_move = move_evaluations[0]
+
     # Log the decision
     turn = game_state["turn"]
-    best_move = move_evaluations[0]
 
     # DESPERATION MODE: If all moves are terrible, try to find the one that survives longest
     if best_move["score"] <= -5000:
@@ -1244,6 +1273,11 @@ def move(game_state: typing.Dict) -> typing.Dict:
         print("⚠️  CRITICAL: All moves lead to death! Choosing least bad option.")
     elif best_move["score"] < 0:
         print("⚠️  WARNING: Best move has negative score - dangerous situation!")
+
+    # Track recent moves for pattern detection (keep last 5 moves)
+    recent_moves.append(chosen_direction)
+    if len(recent_moves) > 5:
+        recent_moves.pop(0)
 
     # Dynamic shouts based on situation
     shout = ""

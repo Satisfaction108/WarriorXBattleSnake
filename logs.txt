@@ -1,0 +1,438 @@
+🎯 FINAL DECISION: UP
+   From: (5, 1)
+   To: (5, 2)
+   ✅ Move is safe!
+>>> FINAL MOVE: UP <<<
+============================================================
+============================================================
+MOVE 0 | Health: 100 | Length: 3
+============================================================
+Move Evaluations:
+   left:   2272 - ✓ MINIMAX(d=6): Score 1536 (+153), ✓ SPACE: 117 cells, ✓ SAFE: 3 escape routes (+300)
+     up:   2267 - ✓ MINIMAX(d=6): Score 1583 (+158), ✓ SPACE: 117 cells, ✓ SAFE: 3 escape routes (+300)
+   down:   2262 - ✓ MINIMAX(d=6): Score 1536 (+153), ✓ SPACE: 117 cells, ✓ SAFE: 3 escape routes (+300)
+  right:   1472 - ✓ MINIMAX(d=6): Score 1635 (+163), ✓ SPACE: 117 cells, ⚠️  Limited: 2 escape routes (-500)
+>>> CHOSEN: LEFT (score: 2272)
+🎯 FINAL DECISION: LEFT
+   From: (9, 5)
+   To: (8, 5)
+   ✅ Move is safe!
+>>> FINAL MOVE: LEFT <<<
+============================================================
+📍 Current Position: (9, 7) on 11x11 board
+   Walls at: x=11, y=11
+   Possible moves (wall-filtered): ['up', 'left', 'right']
+📍 Current Position: (5, 3) on 11x11 board
+   Walls at: x=11, y=11
+   Possible moves (wall-filtered): ['up', 'left', 'right']
+============================================================
+MOVE 1 | Health: 99 | Length: 3
+============================================================
+Move Evaluations:
+  right:  11468 - ✓ MINIMAX(d=6): Score 1720 (+172), ✓ SPACE: 113 cells, ⚠️  Limited: 2 escape routes (-500)
+   left:   2265 - ✓ MINIMAX(d=6): Score 1595 (+159), ✓ SPACE: 113 cells, ✓ SAFE: 3 escape routes (+300)
+     up:   2262 - ✓ MINIMAX(d=6): Score 1663 (+166), ✓ SPACE: 113 cells, ✓ SAFE: 3 escape routes (+300)
+>>> CHOSEN: RIGHT (score: 11468)
+🎯 FINAL DECISION: RIGHT
+   From: (9, 6)
+   To: (10, 6)
+   ✅ Move is safe!
+>>> FINAL MOVE: RIGHT <<<
+============================================================
+📍 Current Position: (5, 4) on 11x11 board
+   Walls at: x=11, y=11
+   Possible moves (wall-filtered): ['up', 'left', 'right']
+📍 Current Position: (9, 8) on 11x11 board
+   Walls at: x=11, y=11
+   Possible moves (wall-filtered): ['up', 'left', 'right']
+📍 Current Position: (9, 9) on 11x11 board
+   Walls at: x=11, y=11
+   Possible moves (wall-filtered): ['up', 'left', 'right']
+============================================================
+MOVE 1 | Health: 99 | Length: 3
+============================================================
+Move Evaluations:
+     up:   2300 - ✓ MINIMAX(d=6): Score 1847 (+184), ✓ SPACE: 113 cells, ✓ SAFE: 3 escape routes (+300)
+  right:   2272 - ✓ MINIMAX(d=6): Score 1664 (+166), ✓ SPACE: 113 cells, ✓ SAFE: 3 escape routes (+300)
+   left:   2271 - ✓ MINIMAX(d=6): Score 1658 (+165), ✓ SPACE: 113 cells, ✓ SAFE: 3 escape routes (+300)
+>>> CHOSEN: UP (score: 2300)
+🎯 FINAL DECISION: UP
+   From: (5, 2)
+   To: (5, 3)
+   ✅ Move is safe!
+>>> FINAL MOVE: UP <<<
+============================================================
+📍 Current Position: (5, 5) on 11x11 board
+   Walls at: x=11, y=11
+   Possible moves (wall-filtered): ['up', 'left', 'right']
+============================================================
+MOVE 2 | Health: 98 | Length: 3
+============================================================
+Move Evaluations:
+   left:   2254 - ✓ MINIMAX(d=6): Score 1579 (+157), ✓ SPACE: 111 cells, ✓ SAFE: 3 escape routes (+300)
+     up:   2244 - ✓ MINIMAX(d=6): Score 1579 (+157), ✓ SPACE: 111 cells, ✓ SAFE: 3 escape routes (+300)
+  right:   1455 - ✓ MINIMAX(d=6): Score 1684 (+168), ✓ SPACE: 111 cells, ⚠️  Limited: 2 escape routes (-500)
+>>> CHOSEN: LEFT (score: 2254)
+🎯 FINAL DECISION: LEFT
+   From: (9, 7)
+   To: (8, 7)
+   ✅ Move is safe!
+>>> FINAL MOVE: LEFT <<<
+============================================================
+============================================================
+MOVE 3 | Health: 97 | Length: 3
+============================================================
+Move Evaluations:
+   left:   1482 - ✓ MINIMAX(d=6): Score 1902 (+190), ✓ SPACE: 111 cells, ✓ SAFE: 3 escape routes (+300)
+  right:   1476 - ✓ MINIMAX(d=6): Score 1949 (+194), ✓ SPACE: 111 cells, ⚠️  Limited: 2 escape routes (-500)
+     up:  -3236 - ✓ MINIMAX(d=6): Score 1820 (+182), ✓ SPACE: 111 cells, ✓ SAFE: 3 escape routes (+300)
+>>> CHOSEN: LEFT (score: 1482)
+🎯 FINAL DECISION: LEFT
+   From: (9, 8)
+   To: (8, 8)
+   ✅ Move is safe!
+>>> FINAL MOVE: LEFT <<<
+============================================================
+📍 Current Position: (5, 6) on 11x11 board
+   Walls at: x=11, y=11
+   Possible moves (wall-filtered): ['up', 'left', 'right']
+📍 Current Position: (9, 10) on 11x11 board
+   Walls at: x=11, y=11
+   Possible moves (wall-filtered): ['left', 'right']
+============================================================
+MOVE 4 | Health: 96 | Length: 3
+============================================================
+Move Evaluations:
+   left:    321 - ✓ MINIMAX(d=6): Score 1366 (+136), ✓ SPACE: 110 cells, ✓ SAFE: 3 escape routes (+300)
+  right:  -5576 - ✓ MINIMAX(d=6): Score 1496 (+149), ✓ SPACE: 110 cells, ⚠️  Limited: 2 escape routes (-500)
+     up:  -6004 - ✓ MINIMAX(d=6): Score 1215 (+121), ✓ SPACE: 110 cells, ⚠️  Limited: 2 escape routes (-500)
+>>> CHOSEN: LEFT (score: 321)
+🎯 FINAL DECISION: LEFT
+   From: (9, 9)
+   To: (8, 9)
+   ✅ Move is safe!
+>>> FINAL MOVE: LEFT <<<
+============================================================
+============================================================
+MOVE 3 | Health: 97 | Length: 3
+============================================================
+Move Evaluations:
+     up:  12314 - ✓ MINIMAX(d=6): Score 1927 (+192), ✓ SPACE: 111 cells, ✓ SAFE: 3 escape routes (+300)
+   left:   2293 - ✓ MINIMAX(d=6): Score 1817 (+181), ✓ SPACE: 111 cells, ✓ SAFE: 3 escape routes (+300)
+  right:   2293 - ✓ MINIMAX(d=6): Score 1817 (+181), ✓ SPACE: 111 cells, ✓ SAFE: 3 escape routes (+300)
+>>> CHOSEN: UP (score: 12314)
+🎯 FINAL DECISION: UP
+   From: (5, 4)
+   To: (5, 5)
+   ✅ Move is safe!
+>>> FINAL MOVE: UP <<<
+============================================================
+📍 Current Position: (5, 7) on 11x11 board
+   Walls at: x=11, y=11
+   Possible moves (wall-filtered): ['up', 'left', 'right']
+⚠️  DESPERATION MODE: All moves look fatal! Finding longest survival...
+============================================================
+MOVE 5 | Health: 95 | Length: 3
+============================================================
+Move Evaluations:
+   left:  -2003 - ✓ MINIMAX(d=6): Score 1170 (+117), ✓ SPACE: 110 cells, ⚠️  Limited: 2 escape routes (-500)
+  right:  -7612 - ✓ MINIMAX(d=6): Score 1180 (+118), ✓ SPACE: 110 cells, ⚠️  RISKY: Only 1 escape route (-2500)
+>>> CHOSEN: LEFT (score: -2003)
+🎯 FINAL DECISION: LEFT
+   From: (9, 10)
+   To: (8, 10)
+   ✅ Move is safe!
+>>> FINAL MOVE: LEFT <<<
+============================================================
+⚠️  CRITICAL: All moves lead to death! Choosing least bad option.
+📍 Current Position: (5, 8) on 11x11 board
+   Walls at: x=11, y=11
+   Possible moves (wall-filtered): ['up', 'left', 'right']
+============================================================
+MOVE 4 | Health: 100 | Length: 4
+============================================================
+Move Evaluations:
+  right:   2231 - ✓ MINIMAX(d=6): Score 1865 (+186), ✓ SPACE: 110 cells, ✓ SAFE: 3 escape routes (+300)
+     up:   1832 - ✓ MINIMAX(d=6): Score 1873 (+187), ✓ SPACE: 110 cells, ✓ SAFE: 3 escape routes (+300)
+   left:   1824 - ✓ MINIMAX(d=6): Score 1799 (+179), ✓ SPACE: 110 cells, ✓ SAFE: 3 escape routes (+300)
+>>> CHOSEN: RIGHT (score: 2231)
+🎯 FINAL DECISION: RIGHT
+   From: (5, 5)
+   To: (6, 5)
+   ✅ Move is safe!
+>>> FINAL MOVE: RIGHT <<<
+============================================================
+============================================================
+MOVE 5 | Health: 99 | Length: 4
+============================================================
+Move Evaluations:
+  right:   1423 - ✓ MINIMAX(d=6): Score 1835 (+183), ✓ SPACE: 110 cells, ✓ SAFE: 3 escape routes (+300)
+     up:   1404 - ✓ MINIMAX(d=6): Score 1645 (+164), ✓ SPACE: 110 cells, ✓ SAFE: 3 escape routes (+300)
+   left: -10000 - INSTANT DEATH: Body collision
+>>> CHOSEN: RIGHT (score: 1423)
+🎯 FINAL DECISION: RIGHT
+   From: (5, 6)
+   To: (6, 6)
+   ✅ Move is safe!
+>>> FINAL MOVE: RIGHT <<<
+============================================================
+============================================================
+MOVE 7 | Health: 97 | Length: 4
+============================================================
+Move Evaluations:
+     up:  -2781 - ✓ MINIMAX(d=7): Score 2157 (+215), ✓ SPACE: 112 cells, ⚠️  Limited: 2 escape routes (-500)
+   left: -10000 - INSTANT DEATH: Body collision
+  right: -10000 - INSTANT DEATH: Body collision
+>>> CHOSEN: UP (score: -2781)
+🎯 FINAL DECISION: UP
+   From: (5, 8)
+   To: (5, 9)
+   ✅ Move is safe!
+>>> FINAL MOVE: UP <<<
+============================================================
+⚠️  CRITICAL: All moves lead to death! Choosing least bad option.
+   Desperation choice: LEFT (survival: 51563)
+============================================================
+MOVE 6 | Health: 98 | Length: 4
+============================================================
+Move Evaluations:
+     up: -10000 - INSTANT DEATH: Body collision
+   left: -10000 - INSTANT DEATH: Body collision
+  right: -10000 - INSTANT DEATH: Body collision
+>>> CHOSEN: LEFT (score: 51563)
+🎯 FINAL DECISION: LEFT
+   From: (5, 7)
+   To: (4, 7)
+🚨 SAFETY OVERRIDE: LEFT is NOT SAFE!
+   Attempting to move from (5, 7) to (4, 7)
+   💀 NO SAFE MOVES FOUND! Will die this turn.
+>>> FINAL MOVE: LEFT <<<
+============================================================
+📍 Current Position: (5, 9) on 11x11 board
+   Walls at: x=11, y=11
+   Possible moves (wall-filtered): ['up', 'left', 'right']
+📍 Current Position: (5, 10) on 11x11 board
+   Walls at: x=11, y=11
+   Possible moves (wall-filtered): ['left', 'right']
+============================================================
+MOVE 2 | Health: 98 | Length: 3
+============================================================
+Move Evaluations:
+     up:   2300 - ✓ MINIMAX(d=6): Score 1830 (+183), ✓ SPACE: 111 cells, ✓ SAFE: 3 escape routes (+300)
+   left:   2289 - ✓ MINIMAX(d=6): Score 1822 (+182), ✓ SPACE: 111 cells, ✓ SAFE: 3 escape routes (+300)
+  right:   2289 - ✓ MINIMAX(d=6): Score 1822 (+182), ✓ SPACE: 111 cells, ✓ SAFE: 3 escape routes (+300)
+>>> CHOSEN: UP (score: 2300)
+🎯 FINAL DECISION: UP
+   From: (5, 3)
+   To: (5, 4)
+   ✅ Move is safe!
+>>> FINAL MOVE: UP <<<
+============================================================
+GAME OVER
+============================================================
+MOVE 8 | Health: 96 | Length: 4
+============================================================
+Move Evaluations:
+   left:    790 - ✓ MINIMAX(d=8): Score 1872 (+187), ✓ SPACE: 114 cells, ✓ SAFE: 3 escape routes (+300)
+     up:  -1520 - ✓ MINIMAX(d=8): Score 1773 (+177), ✓ SPACE: 114 cells, ⚠️  Limited: 2 escape routes (-500)
+  right: -10000 - INSTANT DEATH: Body collision
+>>> CHOSEN: LEFT (score: 790)
+🎯 FINAL DECISION: LEFT
+   From: (5, 9)
+   To: (4, 9)
+   ✅ Move is safe!
+>>> FINAL MOVE: LEFT <<<
+============================================================
+GAME OVER
+============================================================
+MOVE 9 | Health: 95 | Length: 4
+============================================================
+Move Evaluations:
+   left:   1509 - ✓ MINIMAX(d=8): Score 2113 (+211), ✓ SPACE: 114 cells, ⚠️  Limited: 2 escape routes (-500)
+  right:  -3516 - ✓ MINIMAX(d=8): Score 1863 (+186), ✓ SPACE: 114 cells, ⚠️  Limited: 2 escape routes (-500)
+>>> CHOSEN: LEFT (score: 1509)
+🎯 FINAL DECISION: LEFT
+   From: (5, 10)
+   To: (4, 10)
+   ✅ Move is safe!
+>>> FINAL MOVE: LEFT <<<
+============================================================
+GAME START
+GAME START
+📍 Current Position: (5, 1) on 11x11 board
+   Walls at: x=11, y=11
+   Possible moves (wall-filtered): ['up', 'down', 'left', 'right']
+📍 Current Position: (5, 9) on 11x11 board
+   Walls at: x=11, y=11
+   Possible moves (wall-filtered): ['up', 'down', 'left', 'right']
+📍 Current Position: (5, 10) on 11x11 board
+   Walls at: x=11, y=11
+   Possible moves (wall-filtered): ['left', 'right']
+📍 Current Position: (5, 2) on 11x11 board
+   Walls at: x=11, y=11
+   Possible moves (wall-filtered): ['up', 'left', 'right']
+============================================================
+MOVE 0 | Health: 100 | Length: 3
+============================================================
+Move Evaluations:
+     up:   2301 - ✓ MINIMAX(d=6): Score 1825 (+182), ✓ SPACE: 117 cells, ✓ SAFE: 3 escape routes (+300)
+   left:   2278 - ✓ MINIMAX(d=6): Score 1697 (+169), ✓ SPACE: 117 cells, ✓ SAFE: 3 escape routes (+300)
+  right:   2275 - ✓ MINIMAX(d=6): Score 1660 (+166), ✓ SPACE: 117 cells, ✓ SAFE: 3 escape routes (+300)
+   down:   1483 - ✓ MINIMAX(d=6): Score 1743 (+174), ✓ SPACE: 117 cells, ⚠️  Limited: 2 escape routes (-500)
+>>> CHOSEN: UP (score: 2301)
+🎯 FINAL DECISION: UP
+   From: (5, 1)
+   To: (5, 2)
+   ✅ Move is safe!
+>>> FINAL MOVE: UP <<<
+============================================================
+============================================================
+MOVE 0 | Health: 100 | Length: 3
+============================================================
+Move Evaluations:
+   down:   2255 - ✓ MINIMAX(d=6): Score 1365 (+136), ✓ SPACE: 117 cells, ✓ SAFE: 3 escape routes (+300)
+   left:   2246 - ✓ MINIMAX(d=6): Score 1370 (+137), ✓ SPACE: 117 cells, ✓ SAFE: 3 escape routes (+300)
+  right:   2245 - ✓ MINIMAX(d=6): Score 1365 (+136), ✓ SPACE: 117 cells, ✓ SAFE: 3 escape routes (+300)
+     up:   1447 - ✓ MINIMAX(d=6): Score 1383 (+138), ✓ SPACE: 117 cells, ⚠️  Limited: 2 escape routes (-500)
+>>> CHOSEN: DOWN (score: 2255)
+🎯 FINAL DECISION: DOWN
+   From: (5, 9)
+   To: (5, 8)
+   ✅ Move is safe!
+>>> FINAL MOVE: DOWN <<<
+============================================================
+============================================================
+MOVE 1 | Health: 99 | Length: 3
+============================================================
+Move Evaluations:
+   left:  11446 - ✓ MINIMAX(d=6): Score 1506 (+150), ✓ SPACE: 113 cells, ⚠️  Limited: 2 escape routes (-500)
+  right:   1428 - ✓ MINIMAX(d=6): Score 1321 (+132), ✓ SPACE: 113 cells, ⚠️  Limited: 2 escape routes (-500)
+>>> CHOSEN: LEFT (score: 11446)
+🎯 FINAL DECISION: LEFT
+   From: (5, 10)
+   To: (4, 10)
+   ✅ Move is safe!
+>>> FINAL MOVE: LEFT <<<
+============================================================
+📍 Current Position: (5, 3) on 11x11 board
+   Walls at: x=11, y=11
+   Possible moves (wall-filtered): ['up', 'left', 'right']
+📍 Current Position: (5, 4) on 11x11 board
+   Walls at: x=11, y=11
+   Possible moves (wall-filtered): ['up', 'left', 'right']
+📍 Current Position: (5, 5) on 11x11 board
+   Walls at: x=11, y=11
+   Possible moves (wall-filtered): ['up', 'left', 'right']
+============================================================
+MOVE 1 | Health: 99 | Length: 3
+============================================================
+Move Evaluations:
+     up:   2277 - ✓ MINIMAX(d=6): Score 1613 (+161), ✓ SPACE: 113 cells, ✓ SAFE: 3 escape routes (+300)
+  right:   2250 - ✓ MINIMAX(d=6): Score 1441 (+144), ✓ SPACE: 113 cells, ✓ SAFE: 3 escape routes (+300)
+   left:   1458 - ✓ MINIMAX(d=6): Score 1520 (+152), ✓ SPACE: 113 cells, ✓ SAFE: 3 escape routes (+300)
+>>> CHOSEN: UP (score: 2277)
+🎯 FINAL DECISION: UP
+   From: (5, 2)
+   To: (5, 3)
+📍 Current Position: (5, 6) on 11x11 board
+   Walls at: x=11, y=11
+   Possible moves (wall-filtered): ['up', 'left', 'right']
+   ✅ Move is safe!
+>>> FINAL MOVE: UP <<<
+============================================================
+📍 Current Position: (5, 7) on 11x11 board
+   Walls at: x=11, y=11
+   Possible moves (wall-filtered): ['up', 'left', 'right']
+📍 Current Position: (5, 8) on 11x11 board
+   Walls at: x=11, y=11
+   Possible moves (wall-filtered): ['up', 'left', 'right']
+📍 Current Position: (5, 9) on 11x11 board
+   Walls at: x=11, y=11
+   Possible moves (wall-filtered): ['up', 'left', 'right']
+📍 Current Position: (5, 10) on 11x11 board
+   Walls at: x=11, y=11
+   Possible moves (wall-filtered): ['left', 'right']
+GAME OVER
+============================================================
+MOVE 2 | Health: 98 | Length: 3
+============================================================
+Move Evaluations:
+     up:   2313 - ✓ MINIMAX(d=7): Score 1928 (+192), ✓ SPACE: 113 cells, ✓ SAFE: 3 escape routes (+300)
+   left:   2303 - ✓ MINIMAX(d=7): Score 1928 (+192), ✓ SPACE: 113 cells, ✓ SAFE: 3 escape routes (+300)
+  right:   2303 - ✓ MINIMAX(d=7): Score 1928 (+192), ✓ SPACE: 113 cells, ✓ SAFE: 3 escape routes (+300)
+>>> CHOSEN: UP (score: 2313)
+🎯 FINAL DECISION: UP
+   From: (5, 3)
+   To: (5, 4)
+   ✅ Move is safe!
+>>> FINAL MOVE: UP <<<
+============================================================
+GAME OVER
+============================================================
+MOVE 9 | Health: 95 | Length: 4
+============================================================
+Move Evaluations:
+   left:   8059 - ✓ MINIMAX(d=7): Score 1677 (+167), ✓ SPACE: 111 cells, ⚠️  Limited: 2 escape routes (-500)
+  right:  -1554 - ✓ MINIMAX(d=7): Score 1546 (+154), ✓ SPACE: 111 cells, ⚠️  Limited: 2 escape routes (-500)
+>>> CHOSEN: LEFT (score: 8059)
+🎯 FINAL DECISION: LEFT
+   From: (5, 10)
+   To: (4, 10)
+   ✅ Move is safe!
+>>> FINAL MOVE: LEFT <<<
+============================================================
+============================================================
+MOVE 7 | Health: 97 | Length: 4
+============================================================
+Move Evaluations:
+  right:   1475 - ✓ MINIMAX(d=7): Score 1716 (+171), ✓ SPACE: 112 cells, ✓ SAFE: 3 escape routes (+300)
+   left:   1079 - ✓ MINIMAX(d=7): Score 1757 (+175), ✓ SPACE: 112 cells, ✓ SAFE: 3 escape routes (+300)
+     up:    784 - ✓ MINIMAX(d=7): Score 1806 (+180), ✓ SPACE: 112 cells, ✓ SAFE: 3 escape routes (+300)
+>>> CHOSEN: RIGHT (score: 1475)
+🎯 FINAL DECISION: RIGHT
+   From: (5, 8)
+   To: (6, 8)
+   ✅ Move is safe!
+>>> FINAL MOVE: RIGHT <<<
+============================================================
+============================================================
+MOVE 5 | Health: 99 | Length: 4
+============================================================
+Move Evaluations:
+     up:   2299 - ✓ MINIMAX(d=7): Score 1853 (+185), ✓ SPACE: 112 cells, ✓ SAFE: 3 escape routes (+300)
+  right:   2299 - ✓ MINIMAX(d=7): Score 1853 (+185), ✓ SPACE: 112 cells, ✓ SAFE: 3 escape routes (+300)
+   left:   1899 - ✓ MINIMAX(d=7): Score 1853 (+185), ✓ SPACE: 112 cells, ✓ SAFE: 3 escape routes (+300)
+>>> CHOSEN: UP (score: 2299)
+🎯 FINAL DECISION: UP
+   From: (5, 6)
+   To: (5, 7)
+   ✅ Move is safe!
+>>> FINAL MOVE: UP <<<
+============================================================
+============================================================
+MOVE 4 | Health: 100 | Length: 4
+============================================================
+Move Evaluations:
+     up:   2301 - ✓ MINIMAX(d=7): Score 1821 (+182), ✓ SPACE: 112 cells, ✓ SAFE: 3 escape routes (+300)
+   left:   2301 - ✓ MINIMAX(d=7): Score 1821 (+182), ✓ SPACE: 112 cells, ✓ SAFE: 3 escape routes (+300)
+  right:   2301 - ✓ MINIMAX(d=7): Score 1821 (+182), ✓ SPACE: 112 cells, ✓ SAFE: 3 escape routes (+300)
+>>> CHOSEN: UP (score: 2301)
+🎯 FINAL DECISION: UP
+   From: (5, 5)
+   To: (5, 6)
+   ✅ Move is safe!
+>>> FINAL MOVE: UP <<<
+============================================================
+============================================================
+MOVE 6 | Health: 98 | Length: 4
+============================================================
+Move Evaluations:
+  right:   2289 - ✓ MINIMAX(d=7): Score 1801 (+180), ✓ SPACE: 112 cells, ✓ SAFE: 3 escape routes (+300)
+   left:   1889 - ✓ MINIMAX(d=7): Score 1801 (+180), ✓ SPACE: 112 cells, ✓ SAFE: 3 escape routes (+300)
+     up:   1489 - ✓ MINIMAX(d=7): Score 1801 (+180), ✓ SPACE: 112 cells, ✓ SAFE: 3 escape routes (+300)
+>>> CHOSEN: RIGHT (score: 2289)
+🎯 FINAL DECISION: RIGHT
+   From: (5, 7)
+   To: (6, 7)
+   ✅ Move is safe!
+>>> FINAL MOVE: RIGHT <<<
