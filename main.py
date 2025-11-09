@@ -197,9 +197,9 @@ def info() -> typing.Dict:
     return {
         "apiversion": "1",
         "author": "WarriorX",
-        "color": "#8B00FF",  # Deep electric purple - powerful and menacing
-        "head": "dead",      # SKULL HEAD - ultimate intimidation
-        "tail": "bolt",      # Lightning bolt - raw power
+        "color": "#1a1a1a",  # PURE BLACK - Ultimate menace and fear
+        "head": "dead",      # SKULL HEAD - Death incarnate 💀
+        "tail": "bolt",      # LIGHTNING BOLT - Unstoppable power ⚡
     }
 
 
@@ -570,64 +570,128 @@ def evaluate_move(direction: str, game_state: dict, use_prediction: bool = True)
         future_outcome = simulate_future(game_state, direction, prediction_depth, prediction_depth)
 
         if not future_outcome["alive"]:
-            score -= 5000
-            reasons.append(f"PREDICTION: Dies within {prediction_depth} moves")
+            # DEATH PREDICTION = MASSIVE PENALTY
+            score -= 8000
+            reasons.append(f"💀 PREDICTION: Dies within {prediction_depth} moves")
         else:
             # Reward based on predicted health and space
-            score += future_outcome["health"] * 10
-            score += min(future_outcome["space"], 100) * 5
-            reasons.append(f"PREDICTION: Survives with health {future_outcome['health']}")
+            score += future_outcome["health"] * 15
+            score += min(future_outcome["space"], 100) * 8
+            reasons.append(f"✓ PREDICTION: Survives (health:{future_outcome['health']}, space:{future_outcome['space']})")
 
     # Get obstacles for flood fill (excluding tails)
     obstacles = get_all_obstacles(game_state, include_tail=False)
 
-    # IMMEDIATE SPACE: Evaluate available space
+    # IMMEDIATE SPACE: Evaluate available space - BE CONSERVATIVE!
     available_space = flood_fill(new_head, board_width, board_height, obstacles)
 
+    # Need MORE space than just our length to be safe
+    safe_space_needed = my_length * 3  # Conservative: need 3x our length
+
     if available_space < my_length:
-        score -= 2000
-        reasons.append(f"TRAP: Only {available_space} spaces (need {my_length})")
+        # DEATH TRAP - not enough space to even fit!
+        score -= 5000
+        reasons.append(f"🚫 DEATH TRAP: Only {available_space} spaces (need {my_length})")
     elif available_space < my_length * 2:
-        score -= 500
-        reasons.append(f"TIGHT: {available_space} spaces")
+        # Very tight - dangerous!
+        score -= 2000
+        reasons.append(f"⚠️  VERY TIGHT: {available_space} spaces (risky!)")
+    elif available_space < safe_space_needed:
+        # Somewhat tight - be careful
+        score -= 800
+        reasons.append(f"⚠️  TIGHT: {available_space} spaces (need {safe_space_needed})")
     else:
-        score += min(available_space * 3, 300)
-        reasons.append(f"SPACE: {available_space} cells")
+        # Good space - reward it
+        score += min(available_space * 5, 500)
+        reasons.append(f"✓ SPACE: {available_space} cells")
 
-    # FOOD SEEKING: AGGRESSIVE food seeking - always go for food when safe!
+    # OPPONENT PROXIMITY: Avoid getting boxed in by other snakes
+    for snake in game_state["board"]["snakes"]:
+        if snake["id"] == game_state["you"]["id"]:
+            continue
+
+        opponent_head = snake["body"][0]
+        opponent_length = len(snake["body"])
+        distance_to_opponent = manhattan_distance(new_head, opponent_head)
+
+        # Penalize being too close to larger snakes
+        if opponent_length >= my_length:
+            if distance_to_opponent <= 2:
+                penalty = 1000 - (distance_to_opponent * 300)
+                score -= penalty
+                reasons.append(f"⚠️  TOO CLOSE to larger snake! (-{penalty})")
+            elif distance_to_opponent <= 3:
+                penalty = 300
+                score -= penalty
+                reasons.append(f"⚠️  Near larger snake (-{penalty})")
+
+        # Check if we're moving into a corner with opponent nearby
+        for segment in snake["body"][:3]:  # Check first 3 segments (head and neck)
+            if manhattan_distance(new_head, segment) <= 1:
+                score -= 1500
+                reasons.append(f"🚫 DANGER: Adjacent to opponent body!")
+                break
+
+    # FOOD SEEKING: ULTRA AGGRESSIVE - Food is LIFE!
     if food_list:
-        nearest_food = min(food_list, key=lambda f: manhattan_distance(new_head, f))
+        # Check if we're moving ONTO food (this move eats it!)
+        eating_food = False
+        for food in food_list:
+            if coords_equal(new_head, food):
+                eating_food = True
+                break
 
-        obstacles_with_tail = get_all_obstacles(game_state, include_tail=True)
-        path_to_food = bfs_path(new_head, nearest_food, board_width, board_height, obstacles_with_tail)
-
-        if my_health < 30:
-            # Critical - MUST get food
-            if path_to_food:
-                score += 2000 - len(path_to_food) * 100
-                reasons.append(f"CRITICAL: Food in {len(path_to_food)} moves")
-            else:
-                score -= 1000
-                reasons.append("CRITICAL: No food path!")
-        elif my_health < 70:
-            # Should get food soon
-            if path_to_food:
-                score += 1000 - len(path_to_food) * 50
-                reasons.append(f"HUNGRY: Food in {len(path_to_food)} moves")
-            else:
-                score -= 200
-                reasons.append("HUNGRY: No food path")
+        if eating_food:
+            # EATING FOOD THIS TURN = MASSIVE BONUS!
+            food_bonus = 10000  # Absolutely prioritize eating food!
+            score += food_bonus
+            reasons.append(f"🍎🍎🍎 EATING FOOD NOW! (+{food_bonus})")
         else:
-            # Healthy - STILL AGGRESSIVELY SEEK FOOD when safe!
-            # If we have good space and prediction shows we survive, GO FOR FOOD!
-            if path_to_food:
-                # Much higher bonus for going toward food even when healthy
-                food_bonus = 800 - len(path_to_food) * 30
-                score += food_bonus
-                reasons.append(f"SAFE FOOD: {len(path_to_food)} moves away (+{food_bonus})")
+            # Not eating this turn, but check path to nearest food
+            nearest_food = min(food_list, key=lambda f: manhattan_distance(new_head, f))
+            food_distance = manhattan_distance(new_head, nearest_food)
+
+            obstacles_with_tail = get_all_obstacles(game_state, include_tail=True)
+            path_to_food = bfs_path(new_head, nearest_food, board_width, board_height, obstacles_with_tail)
+
+            if my_health < 30:
+                # CRITICAL - MUST get food or die!
+                if path_to_food:
+                    # Massive bonus for critical food
+                    food_bonus = 5000 - len(path_to_food) * 200
+                    score += food_bonus
+                    reasons.append(f"🍎 CRITICAL FOOD: {len(path_to_food)} moves (+{food_bonus})")
+                else:
+                    score -= 3000
+                    reasons.append("💀 CRITICAL: No food path!")
+            elif my_health < 70:
+                # Should get food soon
+                if path_to_food:
+                    food_bonus = 3000 - len(path_to_food) * 100
+                    score += food_bonus
+                    reasons.append(f"🍎 HUNGRY: Food in {len(path_to_food)} moves (+{food_bonus})")
+                else:
+                    score -= 500
+                    reasons.append("⚠️  HUNGRY: No food path")
             else:
-                # Small penalty for not having food path
-                score -= 50
+                # Healthy - STILL SUPER AGGRESSIVE FOR FOOD!
+                if path_to_food:
+                    # ADJACENT FOOD (1 move away) = MASSIVE PRIORITY!
+                    if len(path_to_food) == 1:
+                        food_bonus = 4000  # HUGE bonus for adjacent food
+                        score += food_bonus
+                        reasons.append(f"🍎🍎🍎 ADJACENT FOOD! (+{food_bonus})")
+                    elif len(path_to_food) <= 3:
+                        food_bonus = 2500 - len(path_to_food) * 200
+                        score += food_bonus
+                        reasons.append(f"🍎 CLOSE FOOD: {len(path_to_food)} moves (+{food_bonus})")
+                    else:
+                        food_bonus = 1500 - len(path_to_food) * 50
+                        score += food_bonus
+                        reasons.append(f"🍎 Food: {len(path_to_food)} moves (+{food_bonus})")
+                else:
+                    # Penalty for no food path even when healthy
+                    score -= 100
 
     # TAIL CHASING: Safe when healthy
     if my_health > 50 and len(my_body) > 3:
