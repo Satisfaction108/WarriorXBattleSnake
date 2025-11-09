@@ -684,18 +684,20 @@ def prioritize_food(game_state: dict, position: dict) -> tuple:
     if not food_list:
         return (False, None, 0, 0)
 
-    # Calculate urgency based on health - MORE AGGRESSIVE THRESHOLDS
-    # We need to seek food earlier to avoid starvation
-    if my_health < 20:
+    # Calculate urgency based on health - EXTREMELY AGGRESSIVE THRESHOLDS
+    # Always seek food to grow fast like top players
+    if my_health < 15:
         urgency = 10  # CRITICAL - will die very soon
-    elif my_health < 40:
+    elif my_health < 30:
         urgency = 8   # VERY HIGH - need food urgently
-    elif my_health < 60:
+    elif my_health < 50:
         urgency = 6   # HIGH - should seek food
-    elif my_health < 80:
-        urgency = 4   # MEDIUM - start looking for food
+    elif my_health < 70:
+        urgency = 5   # MEDIUM-HIGH - actively seek food
+    elif my_health < 90:
+        urgency = 4   # MEDIUM - seek food to grow
     else:
-        urgency = 2   # LOW - but still seek to grow
+        urgency = 3   # Even at full health, seek food to grow!
 
     # Calculate size advantage/disadvantage
     opponents = [s for s in game_state["board"]["snakes"] if s["id"] != my_snake["id"]]
@@ -723,18 +725,19 @@ def prioritize_food(game_state: dict, position: dict) -> tuple:
 
         path_dist = len(path_to_food)
 
-        # CRITICAL SAFETY CHECK: Validate the entire path to food is safe!
-        # This prevents the snake from committing to dangerous food paths
-        is_path_safe, unsafe_step, safety_reason = validate_path_safety(
-            path_to_food, position, game_state,
-            min_escape_routes=2,  # Require at least 2 escape routes at each step
-            min_space=my_length * 2  # Require enough space to maneuver
-        )
+        # SAFETY CHECK: Only validate path when we have VERY good health
+        # When health is lower, take risks to get food and grow!
+        if my_health > 70:
+            is_path_safe, unsafe_step, safety_reason = validate_path_safety(
+                path_to_food, position, game_state,
+                min_escape_routes=1,  # Only need 1 escape route
+                min_space=int(my_length * 1.2)  # Very lenient - just need a bit of space
+            )
 
-        if not is_path_safe:
-            # Path is unsafe - skip this food even if we're hungry!
-            # It's better to survive longer than to die trying to reach food
-            continue
+            if not is_path_safe:
+                # Path is unsafe - skip this food only if we have plenty of health
+                continue
+        # If health <= 70, skip path validation and go for food!
 
         # SAFETY CHECK: After eating, do we have escape space?
         # Simulate being at food position with +1 length
@@ -788,14 +791,14 @@ def prioritize_food(game_state: dict, position: dict) -> tuple:
             best_value = food_value
             best_food = food
 
-    # OPPORTUNISTIC SEEKING: Seek food if net value is positive OR health is urgent
-    # BUT only if we actually found reachable food
+    # AGGRESSIVE SEEKING: Almost always seek food to grow fast!
+    # This is how top players dominate - they grow quickly
     if best_food is None:
         # No reachable food - don't seek even if urgent
         should_seek = False
     else:
-        # Seek food more aggressively - at urgency 4 or higher (health < 80)
-        should_seek = best_value > 0 or urgency >= 4
+        # ALWAYS seek food if we found any! Growth is key to winning
+        should_seek = True  # Changed from conditional - always seek food!
 
     return (should_seek, best_food, urgency, best_value)
 
@@ -1099,7 +1102,7 @@ def evaluate_move(direction: str, game_state: dict, use_prediction: bool = True)
         score += min(available_space * 8, 800)  # Increased from *5, 500
         reasons.append(f"✓ SPACE: {available_space} cells")
 
-    # CORRIDOR DETECTION: Penalize entering narrow corridors heavily
+    # CORRIDOR DETECTION: Penalize entering narrow corridors (but not too harshly)
     # A corridor is when we have walls/obstacles on both sides
     # Check if we're entering a 1-wide or 2-wide corridor
     x, y = new_head["x"], new_head["y"]
@@ -1124,11 +1127,11 @@ def evaluate_move(direction: str, game_state: dict, use_prediction: bool = True)
     in_vertical_corridor = left_blocked and right_blocked
 
     if in_horizontal_corridor or in_vertical_corridor:
-        # We're in a 1-wide corridor - VERY DANGEROUS!
-        penalty = 5000
+        # We're in a 1-wide corridor - risky but sometimes necessary for food
+        penalty = 1500  # Reduced from 5000 - penalize but don't completely block
         score -= penalty
         corridor_type = "horizontal" if in_horizontal_corridor else "vertical"
-        reasons.append(f"🚫🚫 CORRIDOR: Entering {corridor_type} 1-wide corridor! (-{penalty})")
+        reasons.append(f"⚠️  CORRIDOR: Entering {corridor_type} 1-wide corridor (-{penalty})")
 
     # FUTURE MOBILITY: Check if we'll have escape routes after this move
     # Count how many safe moves we'll have from the new position
@@ -1165,25 +1168,21 @@ def evaluate_move(direction: str, game_state: dict, use_prediction: bool = True)
         score += 500  # Increased from 300
         reasons.append(f"✓ SAFE: {future_safe_moves} escape routes (+500)")
 
-    # DEAD END DETECTION: Check if this move leads to a dead end within 5 moves
-    # This is CRITICAL to avoid getting trapped!
-    is_dead_end, depth_to_trap, min_escapes = detect_dead_end(new_head, game_state, max_depth=5)
+    # DEAD END DETECTION: Check if this move leads to a dead end within 3 moves
+    # Only penalize TRUE dead ends (0 escapes), not just tight spaces
+    is_dead_end, depth_to_trap, min_escapes = detect_dead_end(new_head, game_state, max_depth=3)
 
-    if is_dead_end:
-        # This path leads to certain death!
-        penalty = 15000
+    if is_dead_end and min_escapes == 0:
+        # This path leads to CERTAIN death (0 escape routes)!
+        penalty = 10000  # Reduced from 12000
         score -= penalty
-        reasons.append(f"💀💀 DEAD END: Leads to trap in {depth_to_trap} moves! (-{penalty})")
-    elif min_escapes == 1 and depth_to_trap <= 3:
-        # This path leads to a very tight situation soon
-        penalty = 6000
+        reasons.append(f"💀 DEAD END: Trap in {depth_to_trap} moves! (-{penalty})")
+    elif min_escapes == 1 and depth_to_trap <= 1:
+        # This path leads to a very tight situation IMMEDIATELY
+        penalty = 3000  # Reduced from 4000, and only if depth <= 1
         score -= penalty
-        reasons.append(f"🚫 DANGEROUS PATH: Only 1 escape in {depth_to_trap} moves (-{penalty})")
-    elif min_escapes <= 2 and depth_to_trap <= 2:
-        # This path gets tight very quickly
-        penalty = 3000
-        score -= penalty
-        reasons.append(f"⚠️  TIGHT PATH: Limited escapes in {depth_to_trap} moves (-{penalty})")
+        reasons.append(f"⚠️  TIGHT PATH: Only 1 escape next move (-{penalty})")
+    # Removed the third condition - don't penalize having 2 escapes
 
     # EDGE AWARENESS: Avoid getting trapped against walls, especially when opponents are nearby
     distance_to_left_wall = new_head["x"]
@@ -1317,8 +1316,8 @@ def evaluate_move(direction: str, game_state: dict, use_prediction: bool = True)
 
         if eating_food:
             # EATING FOOD THIS TURN = MASSIVE BONUS!
-            # Use composite food value + urgency scaling - INCREASED
-            food_bonus = 10000 + (urgency * 1500) + max(food_value, 0)  # Increased from 8000 + urgency*1000
+            # Increased even more to prioritize eating
+            food_bonus = 15000 + (urgency * 2000) + max(food_value, 0)  # Increased from 10000
             score += food_bonus
             reasons.append(f"🍎🍎🍎 EATING FOOD! Urgency:{urgency} Value:{food_value} (+{food_bonus})")
         elif should_seek and best_food:
@@ -1327,25 +1326,30 @@ def evaluate_move(direction: str, game_state: dict, use_prediction: bool = True)
             path_to_food = bfs_path(new_head, best_food, board_width, board_height, obstacles_with_tail)
 
             if path_to_food:
-                # VALIDATE PATH SAFETY: Make sure the path to food is actually safe!
-                # This is critical to avoid getting trapped while seeking food
-                is_safe, unsafe_step, reason = validate_path_safety(
-                    path_to_food, new_head, game_state,
-                    min_escape_routes=2,  # Require at least 2 escape routes at each step
-                    min_space=my_length * 2  # Require enough space to maneuver
-                )
+                # VALIDATE PATH SAFETY: Only when we have VERY good health
+                # Most of the time, just go for food!
+                if my_health > 70:
+                    is_safe, unsafe_step, reason = validate_path_safety(
+                        path_to_food, new_head, game_state,
+                        min_escape_routes=1,  # Only need 1 escape
+                        min_space=int(my_length * 1.2)  # Very lenient
+                    )
 
-                if is_safe:
-                    # Path is safe! Use the composite food value score directly
-                    # Add urgency boost for critical situations - INCREASED
-                    path_bonus = max(food_value // 2, urgency * 500)  # Increased from urgency * 300
-                    score += path_bonus
-                    reasons.append(f"🍎 FOOD SEEK: {len(path_to_food)} moves, SAFE PATH, value:{food_value} (+{path_bonus})")
+                    if is_safe:
+                        # Path is safe! Big bonus
+                        path_bonus = max(food_value // 2, urgency * 700)
+                        score += path_bonus
+                        reasons.append(f"🍎 FOOD SEEK: {len(path_to_food)} moves, SAFE, value:{food_value} (+{path_bonus})")
+                    else:
+                        # Path exists but is risky - still give bonus, just smaller
+                        path_bonus = max(food_value // 3, urgency * 400)
+                        score += path_bonus
+                        reasons.append(f"🍎 RISKY FOOD SEEK: {len(path_to_food)} moves, value:{food_value} (+{path_bonus})")
                 else:
-                    # Path exists but is UNSAFE - would lead to trap!
-                    penalty = 4000 if urgency >= 6 else 2000
-                    score -= penalty
-                    reasons.append(f"🚫 UNSAFE FOOD PATH: {reason} (-{penalty})")
+                    # Health <= 70: GO FOR FOOD! No validation needed
+                    path_bonus = max(food_value // 2, urgency * 800)
+                    score += path_bonus
+                    reasons.append(f"🍎🍎 AGGRESSIVE FOOD SEEK: {len(path_to_food)} moves, value:{food_value} (+{path_bonus})")
             else:
                 # No path to prioritized food - INCREASED PENALTIES
                 if urgency >= 8:  # Changed from > 7
@@ -1404,12 +1408,15 @@ def evaluate_move(direction: str, game_state: dict, use_prediction: bool = True)
         score += available_space * 2  # Extra space bonus
         reasons.append(f"🛡️  DEFENSIVE: Space priority (+{available_space * 2})")
 
-    # CENTER CONTROL (reduced to avoid predictable movement patterns)
+    # CENTER CONTROL: Stay near center to have more options and avoid getting trapped
     center_x = board_width // 2
     center_y = board_height // 2
     distance_from_center = manhattan_distance(new_head, {"x": center_x, "y": center_y})
-    # Reduced from *5 to *2 to make movement less predictable
-    score += (20 - distance_from_center) * 2
+    # Increased from *2 to *5 - center control is important for avoiding traps
+    center_bonus = (20 - distance_from_center) * 5
+    score += center_bonus
+    if center_bonus > 50:
+        reasons.append(f"✓ CENTER: Close to center (+{center_bonus})")
 
     return {"score": score, "reasons": reasons, "direction": direction}
 
