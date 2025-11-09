@@ -765,7 +765,11 @@ def evaluate_move(direction: str, game_state: dict, use_prediction: bool = True)
 
     # CRITICAL: Check basic safety
     if not is_safe_move(new_head, game_state, my_length):
-        return {"score": -10000, "reasons": ["INSTANT DEATH: Wall or body collision"], "direction": direction}
+        # Check specifically what's wrong
+        if new_head["x"] < 0 or new_head["x"] >= board_width or new_head["y"] < 0 or new_head["y"] >= board_height:
+            return {"score": -10000, "reasons": [f"INSTANT DEATH: WALL at ({new_head['x']}, {new_head['y']})"], "direction": direction}
+        else:
+            return {"score": -10000, "reasons": ["INSTANT DEATH: Body collision"], "direction": direction}
 
     # PREDICTIVE SIMULATION: Use minimax with alpha-beta pruning
     if use_prediction:
@@ -1171,6 +1175,8 @@ def move(game_state: typing.Dict) -> typing.Dict:
     chosen_direction = best_move["direction"]
     my_head = game_state["you"]["body"][0]
     my_length = len(game_state["you"]["body"])
+    board_width = game_state["board"]["width"]
+    board_height = game_state["board"]["height"]
 
     final_head = {"x": my_head["x"], "y": my_head["y"]}
     if chosen_direction == "up":
@@ -1182,11 +1188,19 @@ def move(game_state: typing.Dict) -> typing.Dict:
     elif chosen_direction == "right":
         final_head["x"] += 1
 
+    # Check if this would go out of bounds - CRITICAL SAFETY CHECK
+    if final_head["x"] < 0 or final_head["x"] >= board_width or final_head["y"] < 0 or final_head["y"] >= board_height:
+        print(f"🚨 CRITICAL BUG: Chosen move {chosen_direction.upper()} would go OUT OF BOUNDS!")
+        print(f"   Head: ({my_head['x']}, {my_head['y']}) -> ({final_head['x']}, {final_head['y']})")
+        print(f"   Board: {board_width}x{board_height}")
+
     # Double-check this move is actually safe
     if not is_safe_move(final_head, game_state, my_length):
-        print(f"🚨 SAFETY OVERRIDE: {chosen_direction} is NOT SAFE! Finding alternative...")
+        print(f"🚨 SAFETY OVERRIDE: {chosen_direction.upper()} is NOT SAFE!")
+        print(f"   Attempting to move from ({my_head['x']}, {my_head['y']}) to ({final_head['x']}, {final_head['y']})")
 
         # Find first actually safe move
+        safe_found = False
         for alt_direction in ["up", "down", "left", "right"]:
             alt_head = {"x": my_head["x"], "y": my_head["y"]}
             if alt_direction == "up":
@@ -1199,9 +1213,13 @@ def move(game_state: typing.Dict) -> typing.Dict:
                 alt_head["x"] += 1
 
             if is_safe_move(alt_head, game_state, my_length):
-                print(f"   Safety override: Choosing {alt_direction.upper()} instead")
+                print(f"   ✅ Safety override: Choosing {alt_direction.upper()} instead -> ({alt_head['x']}, {alt_head['y']})")
                 chosen_direction = alt_direction
+                safe_found = True
                 break
+
+        if not safe_found:
+            print(f"   💀 NO SAFE MOVES FOUND! Will die this turn.")
 
     # Safety check
     if best_move["score"] < -1000:
