@@ -195,6 +195,41 @@ def avoid_head_collision(pos: dict, game_state: dict, my_length: int) -> bool:
     return True
 
 
+def get_opponent_threat_tiles(game_state: dict, my_length: int) -> tuple:
+    """
+    Build threat map of tiles that opponents can reach in one move.
+    Returns (threat_tiles, pursue_tiles):
+    - threat_tiles: set of (x,y) dangerous to move into (larger/equal opponents)
+    - pursue_tiles: set of (x,y) we should pursue (smaller opponents we can dominate)
+    """
+    threat_tiles = set()
+    pursue_tiles = set()
+    
+    for snake in game_state["board"]["snakes"]:
+        if snake["id"] == game_state["you"]["id"]:
+            continue
+        
+        opponent_head = snake["body"][0]
+        opponent_length = len(snake["body"])
+        
+        # Get all tiles opponent could move to
+        opponent_neighbors = get_neighbors(opponent_head,
+                                          game_state["board"]["width"],
+                                          game_state["board"]["height"])
+        
+        for neighbor in opponent_neighbors:
+            tile = (neighbor["x"], neighbor["y"])
+            
+            if opponent_length >= my_length:
+                # Opponent is bigger or equal - this tile is dangerous
+                threat_tiles.add(tile)
+            else:
+                # Opponent is smaller - we can pursue them!
+                pursue_tiles.add(tile)
+    
+    return (threat_tiles, pursue_tiles)
+
+
 # ============================================================================
 # SNAKE APPEARANCE
 # ============================================================================
@@ -500,8 +535,15 @@ def should_play_aggressive(game_state: dict) -> bool:
 
 def prioritize_food(game_state: dict, position: dict) -> tuple:
     """
-    Smart food prioritization.
-    Returns (should_seek_food, best_food, urgency_score).
+    Advanced food prioritization with opportunistic eating.
+    Returns (should_seek_food, best_food, urgency_score, food_value_score).
+    
+    Now considers:
+    - Health urgency
+    - Size advantage (grow to dominate)
+    - Safety of eating (escape space after eating)
+    - Opponent competition
+    - Travel cost vs benefit
     """
     my_snake = game_state["you"]
     my_health = my_snake["health"]
@@ -509,7 +551,7 @@ def prioritize_food(game_state: dict, position: dict) -> tuple:
     food_list = game_state["board"]["food"]
 
     if not food_list:
-        return (False, None, 0)
+        return (False, None, 0, 0)
 
     # Calculate urgency based on health
     if my_health < 15:
@@ -521,15 +563,23 @@ def prioritize_food(game_state: dict, position: dict) -> tuple:
     elif my_health < 70:
         urgency = 2   # LOW
     else:
-        urgency = 0   # Not urgent
+        urgency = 1   # ALWAYS some desire to grow
 
-    # Find nearest food
+    # Calculate size advantage/disadvantage
+    opponents = [s for s in game_state["board"]["snakes"] if s["id"] != my_snake["id"]]
+    if opponents:
+        max_opponent_length = max(len(s["body"]) for s in opponents)
+        size_deficit = max_opponent_length - my_length
+    else:
+        size_deficit = 0
+
+    # Find best food considering multiple factors
     obstacles = get_all_obstacles(game_state, include_tail=False)
     board_width = game_state["board"]["width"]
     board_height = game_state["board"]["height"]
 
     best_food = None
-    best_score = float('inf')
+    best_value = float('-inf')
 
     for food in food_list:
         # Calculate actual path distance (not just Manhattan)
@@ -538,26 +588,67 @@ def prioritize_food(game_state: dict, position: dict) -> tuple:
         if path_dist == -1:
             continue  # Unreachable
 
-        # Check if any opponent is closer to this food
+        # SAFETY CHECK: After eating, do we have escape space?
+        # Simulate being at food position with +1 length
+        test_obstacles = obstacles.copy()
+        escape_space = flood_fill(food, board_width, board_height, test_obstacles)
+
+        # Check opponent competition for this food
         opponent_threat = 0
+        we_are_closest = True
         for snake in game_state["board"]["snakes"]:
             if snake["id"] == my_snake["id"]:
                 continue
 
             opp_dist = manhattan_distance(snake["body"][0], food)
             if opp_dist < path_dist:
-                opponent_threat += 1  # Opponent is closer
+                opponent_threat += 1
+                we_are_closest = False
+            elif opp_dist == path_dist:
+                # Tie - consider snake length
+                if len(snake["body"]) >= my_length:
+                    opponent_threat += 0.5
+                    we_are_closest = False
 
-        # Score: prefer closer food with less opponent threat
-        food_score = path_dist * 10 + opponent_threat * 5
+        # COMPOSITE VALUE CALCULATION
+        # Positive factors (benefits)
+        growth_value = 100  # Base growth value
+        if size_deficit > 0:
+            growth_value += size_deficit * 50  # Extra value if we're smaller
+        
+        urgency_value = urgency * 80  # Health urgency
+        
+        proximity_value = max(0, 50 - path_dist * 5)  # Closer is better
+        
+        escape_value = min(escape_space * 2, 100)  # Safe escape space
+        
+        uncontested_bonus = 100 if we_are_closest else 0  # No competition
+        
+        # Negative factors (costs)
+        travel_cost = path_dist * 10  # Cost of travel
+        
+        threat_penalty = opponent_threat * 80  # Competition penalty
+        
+        danger_penalty = 200 if escape_space < 10 else 0  # Trapped after eating
+        
+        # TOTAL VALUE = Benefits - Costs
+        food_value = (growth_value + urgency_value + proximity_value + 
+                     escape_value + uncontested_bonus - 
+                     travel_cost - threat_penalty - danger_penalty)
 
-        if food_score < best_score:
-            best_score = food_score
+        if food_value > best_value:
+            best_value = food_value
             best_food = food
 
-    should_seek = urgency > 3 or (urgency > 0 and best_food is not None)
+    # OPPORTUNISTIC SEEKING: Seek food if net value is positive OR health is urgent
+    # BUT only if we actually found reachable food
+    if best_food is None:
+        # No reachable food - don't seek even if urgent
+        should_seek = False
+    else:
+        should_seek = best_value > 0 or urgency >= 7
 
-    return (should_seek, best_food, urgency)
+    return (should_seek, best_food, urgency, best_value)
 
 
 # ============================================================================
@@ -680,7 +771,7 @@ def evaluate_game_state(game_state: dict, my_id: str) -> float:
 
 
 def minimax_alpha_beta(game_state: dict, my_id: str, depth: int, alpha: float, beta: float,
-                       maximizing: bool, my_move: str = None) -> tuple:
+                       maximizing: bool, my_move: typing.Optional[str] = None) -> tuple:
     """
     Minimax with alpha-beta pruning.
     Returns (score, best_move).
@@ -944,6 +1035,20 @@ def evaluate_move(direction: str, game_state: dict, use_prediction: bool = True)
             score -= 1000
             reasons.append(f"⚠️  In corner (-1000)")
 
+    # ADVANCED OPPONENT ANALYSIS: Threat mapping and pursuit
+    threat_tiles, pursue_tiles = get_opponent_threat_tiles(game_state, my_length)
+    new_head_tuple = (new_head["x"], new_head["y"])
+    
+    # Check if we're moving into a threat tile (dangerous head-to-head zone)
+    if new_head_tuple in threat_tiles:
+        score -= 4000
+        reasons.append(f"🚫 THREAT ZONE: Opponent head-to-head danger! (-4000)")
+    
+    # Check if we're moving into a pursue tile (we can dominate smaller snake)
+    if new_head_tuple in pursue_tiles:
+        score += 2000
+        reasons.append(f"⚔️  DOMINATE: Head-to-head with smaller snake! (+2000)")
+
     # OPPONENT PROXIMITY: Avoid getting boxed in by other snakes
     for snake in game_state["board"]["snakes"]:
         if snake["id"] == game_state["you"]["id"]:
@@ -953,25 +1058,27 @@ def evaluate_move(direction: str, game_state: dict, use_prediction: bool = True)
         opponent_length = len(snake["body"])
         distance_to_opponent = manhattan_distance(new_head, opponent_head)
 
-        # Check for potential head-to-head collision
-        opponent_neighbors = get_neighbors(opponent_head, board_width, board_height)
-        potential_head_to_head = any(coords_equal(new_head, opp_pos) for opp_pos in opponent_neighbors)
-
-        if potential_head_to_head:
-            if opponent_length > my_length:
-                # Already blocked by avoid_head_collision in is_safe_move
-                pass
-            elif opponent_length == my_length:
-                # Equal length - risky but not instant death
-                score -= 3000
-                reasons.append(f"💀 HEAD-TO-HEAD RISK: Equal length! (-3000)")
-            else:
-                # We're bigger - still risky but less penalty
-                score -= 1000
-                reasons.append(f"⚠️  Head-to-head with smaller snake (-1000)")
+        # SIZE DOMINANCE: Aggressively pursue smaller snakes
+        if opponent_length < my_length:
+            # We're BIGGER - be aggressive!
+            if distance_to_opponent <= 3:
+                # Close to smaller snake - chase them down!
+                chase_bonus = (4 - distance_to_opponent) * 300
+                score += chase_bonus
+                reasons.append(f"⚔️  CHASE SMALLER: Distance {distance_to_opponent} (+{chase_bonus})")
+            
+            # Bonus for cutting them off from food
+            if food_list:
+                for food in food_list:
+                    opp_food_dist = manhattan_distance(opponent_head, food)
+                    our_food_dist = manhattan_distance(new_head, food)
+                    if our_food_dist < opp_food_dist:
+                        score += 250
+                        reasons.append(f"⚔️  DENY FOOD to smaller snake (+250)")
+                        break
 
         # Penalize being too close to larger/equal snakes
-        if opponent_length >= my_length:
+        elif opponent_length >= my_length:
             if distance_to_opponent == 1:
                 penalty = 2000
                 score -= penalty
@@ -988,12 +1095,17 @@ def evaluate_move(direction: str, game_state: dict, use_prediction: bool = True)
         # Check if we're moving adjacent to opponent body segments
         for segment in snake["body"][:5]:  # Check first 5 segments
             if manhattan_distance(new_head, segment) == 1:
-                score -= 2000
-                reasons.append(f"🚫 DANGER: Adjacent to opponent body! (-2000)")
+                if opponent_length < my_length:
+                    # Adjacent to smaller snake body - less dangerous
+                    score -= 500
+                    reasons.append(f"⚠️  Adjacent to smaller opponent body (-500)")
+                else:
+                    score -= 2000
+                    reasons.append(f"🚫 DANGER: Adjacent to larger opponent body! (-2000)")
                 break
 
-    # FOOD SEEKING: Smart prioritization based on game state
-    should_seek, best_food, urgency = prioritize_food(game_state, new_head)
+    # FOOD SEEKING: Advanced prioritization with opportunistic eating
+    should_seek, best_food, urgency, food_value = prioritize_food(game_state, new_head)
 
     if food_list:
         # Check if we're moving ONTO food (this move eats it!)
@@ -1005,22 +1117,21 @@ def evaluate_move(direction: str, game_state: dict, use_prediction: bool = True)
 
         if eating_food:
             # EATING FOOD THIS TURN = MASSIVE BONUS!
-            # Scale bonus based on urgency
-            food_bonus = 10000 + (urgency * 1000)
+            # Use composite food value + urgency scaling
+            food_bonus = 8000 + (urgency * 1000) + max(food_value, 0)
             score += food_bonus
-            reasons.append(f"🍎🍎🍎 EATING FOOD NOW! Urgency:{urgency} (+{food_bonus})")
+            reasons.append(f"🍎🍎🍎 EATING FOOD! Urgency:{urgency} Value:{food_value} (+{food_bonus})")
         elif should_seek and best_food:
-            # Seeking food based on smart prioritization
+            # Seeking food based on advanced prioritization
             obstacles_with_tail = get_all_obstacles(game_state, include_tail=True)
             path_to_food = bfs_path(new_head, best_food, board_width, board_height, obstacles_with_tail)
 
             if path_to_food:
-                # Calculate bonus based on urgency and distance
-                base_bonus = urgency * 500
-                distance_penalty = len(path_to_food) * 50
-                food_bonus = max(base_bonus - distance_penalty, 100)
-                score += food_bonus
-                reasons.append(f"🍎 FOOD SEEK: {len(path_to_food)} moves, urgency:{urgency} (+{food_bonus})")
+                # Use the composite food value score directly
+                # Add urgency boost for critical situations
+                path_bonus = max(food_value // 2, urgency * 300)
+                score += path_bonus
+                reasons.append(f"🍎 FOOD SEEK: {len(path_to_food)} moves, value:{food_value} (+{path_bonus})")
             else:
                 # No path to prioritized food
                 if urgency > 7:
@@ -1029,6 +1140,11 @@ def evaluate_move(direction: str, game_state: dict, use_prediction: bool = True)
                 elif urgency > 3:
                     score -= 1000
                     reasons.append("⚠️  URGENT: No food path!")
+        elif food_value > 200:
+            # High value food exists but we're not seeking it yet
+            # This is for truly opportunistic eating (nearby safe food)
+            score += food_value // 3
+            reasons.append(f"🍎 OPPORTUNISTIC: High-value food nearby (+{food_value // 3})")
 
     # TAIL CHASING: Safe when healthy
     if my_health > 50 and len(my_body) > 3:
