@@ -155,8 +155,9 @@ def is_safe_move(pos: dict, game_state: dict, my_length: int) -> bool:
 
 def avoid_head_collision(pos: dict, game_state: dict, my_length: int) -> bool:
     """
-    Check if moving to pos could result in head-to-head collision with larger/equal snake.
-    Returns True if safe, False if dangerous.
+    Check if moving to pos could result in head-to-head collision with LARGER snake.
+    Returns True if safe, False if dangerous (instant death).
+    Only blocks moves that would definitely lose to a LARGER snake.
     """
     my_head = game_state["you"]["body"][0]
 
@@ -167,21 +168,19 @@ def avoid_head_collision(pos: dict, game_state: dict, my_length: int) -> bool:
         opponent_head = snake["body"][0]
         opponent_length = len(snake["body"])
 
-        # Check if opponent could move to same position or adjacent position
+        # Only avoid if opponent is STRICTLY LARGER (not equal)
+        if opponent_length <= my_length:
+            continue
+
+        # Check if opponent could move to same position
         opponent_neighbors = get_neighbors(opponent_head,
                                           game_state["board"]["width"],
                                           game_state["board"]["height"])
 
         for opp_move in opponent_neighbors:
-            # Direct head-to-head collision
+            # Direct head-to-head collision with LARGER snake = instant death
             if coords_equal(pos, opp_move):
-                if opponent_length >= my_length:
-                    return False  # Dangerous - opponent is bigger or equal
-
-        # Check if we're moving next to opponent's head (they could collide with us)
-        if manhattan_distance(pos, opponent_head) == 1:
-            if opponent_length >= my_length:
-                return False
+                return False  # Dangerous - opponent is bigger
 
     return True
 
@@ -448,10 +447,10 @@ def predict_opponent_moves(game_state: dict, depth: int = 1) -> list:
         return [likely_moves]
 
 
-def simulate_future(game_state: dict, my_move: str, depth: int = 10, max_depth: int = 10) -> dict:
+def simulate_future(game_state: dict, my_move: str, depth: int = 15, max_depth: int = 15) -> dict:
     """
     Simulate future game states to evaluate survival probability.
-    Uses 10-move lookahead for comprehensive trap detection.
+    Uses 15-move lookahead for comprehensive trap detection.
     Returns evaluation metrics.
     """
     if depth == 0 or game_state["you"] is None:
@@ -564,20 +563,21 @@ def evaluate_move(direction: str, game_state: dict, use_prediction: bool = True)
     if not is_safe_move(new_head, game_state, my_length):
         return {"score": -10000, "reasons": ["INSTANT DEATH: Wall or body collision"], "direction": direction}
 
-    # PREDICTIVE SIMULATION: Simulate 10 moves ahead for better trap avoidance
+    # PREDICTIVE SIMULATION: Simulate 15 moves ahead for comprehensive trap detection
     if use_prediction:
-        prediction_depth = 10  # Simulate 10 moves ahead for comprehensive lookahead
+        prediction_depth = 15  # Increased to 15 moves for better trap detection
         future_outcome = simulate_future(game_state, direction, prediction_depth, prediction_depth)
 
         if not future_outcome["alive"]:
-            # DEATH PREDICTION = MASSIVE PENALTY
-            score -= 8000
-            reasons.append(f"💀 PREDICTION: Dies within {prediction_depth} moves")
+            # DEATH PREDICTION = ABSOLUTELY AVOID THIS!
+            score -= 15000
+            reasons.append(f"💀💀💀 PREDICTION: DEATH in {prediction_depth} moves! (-15000)")
         else:
             # Reward based on predicted health and space
-            score += future_outcome["health"] * 15
-            score += min(future_outcome["space"], 100) * 8
-            reasons.append(f"✓ PREDICTION: Survives (health:{future_outcome['health']}, space:{future_outcome['space']})")
+            health_bonus = future_outcome["health"] * 20
+            space_bonus = min(future_outcome["space"], 100) * 10
+            score += health_bonus + space_bonus
+            reasons.append(f"✓ PREDICTION: Survives (health:{future_outcome['health']}, space:{future_outcome['space']}) (+{health_bonus + space_bonus})")
 
     # Get obstacles for flood fill (excluding tails)
     obstacles = get_all_obstacles(game_state, include_tail=False)
@@ -605,6 +605,41 @@ def evaluate_move(direction: str, game_state: dict, use_prediction: bool = True)
         score += min(available_space * 5, 500)
         reasons.append(f"✓ SPACE: {available_space} cells")
 
+    # FUTURE MOBILITY: Check if we'll have escape routes after this move
+    # Count how many safe moves we'll have from the new position
+    future_safe_moves = 0
+    for future_dir in ["up", "down", "left", "right"]:
+        # Calculate future position
+        future_pos = {"x": new_head["x"], "y": new_head["y"]}
+        if future_dir == "up":
+            future_pos["y"] += 1
+        elif future_dir == "down":
+            future_pos["y"] -= 1
+        elif future_dir == "left":
+            future_pos["x"] -= 1
+        elif future_dir == "right":
+            future_pos["x"] += 1
+
+        if is_safe_move(future_pos, game_state, my_length):
+            future_safe_moves += 1
+
+    if future_safe_moves == 0:
+        # NO ESCAPE ROUTES - this is a trap!
+        score -= 6000
+        reasons.append(f"🚫 TRAP: No escape routes! (-6000)")
+    elif future_safe_moves == 1:
+        # Only one escape route - very risky!
+        score -= 2500
+        reasons.append(f"⚠️  RISKY: Only 1 escape route (-2500)")
+    elif future_safe_moves == 2:
+        # Two escape routes - okay but not great
+        score -= 500
+        reasons.append(f"⚠️  Limited: 2 escape routes (-500)")
+    else:
+        # Multiple escape routes - good!
+        score += 300
+        reasons.append(f"✓ SAFE: {future_safe_moves} escape routes (+300)")
+
     # OPPONENT PROXIMITY: Avoid getting boxed in by other snakes
     for snake in game_state["board"]["snakes"]:
         if snake["id"] == game_state["you"]["id"]:
@@ -614,22 +649,43 @@ def evaluate_move(direction: str, game_state: dict, use_prediction: bool = True)
         opponent_length = len(snake["body"])
         distance_to_opponent = manhattan_distance(new_head, opponent_head)
 
-        # Penalize being too close to larger snakes
-        if opponent_length >= my_length:
-            if distance_to_opponent <= 2:
-                penalty = 1000 - (distance_to_opponent * 300)
-                score -= penalty
-                reasons.append(f"⚠️  TOO CLOSE to larger snake! (-{penalty})")
-            elif distance_to_opponent <= 3:
-                penalty = 300
-                score -= penalty
-                reasons.append(f"⚠️  Near larger snake (-{penalty})")
+        # Check for potential head-to-head collision
+        opponent_neighbors = get_neighbors(opponent_head, board_width, board_height)
+        potential_head_to_head = any(coords_equal(new_head, opp_pos) for opp_pos in opponent_neighbors)
 
-        # Check if we're moving into a corner with opponent nearby
-        for segment in snake["body"][:3]:  # Check first 3 segments (head and neck)
-            if manhattan_distance(new_head, segment) <= 1:
-                score -= 1500
-                reasons.append(f"🚫 DANGER: Adjacent to opponent body!")
+        if potential_head_to_head:
+            if opponent_length > my_length:
+                # Already blocked by avoid_head_collision in is_safe_move
+                pass
+            elif opponent_length == my_length:
+                # Equal length - risky but not instant death
+                score -= 3000
+                reasons.append(f"💀 HEAD-TO-HEAD RISK: Equal length! (-3000)")
+            else:
+                # We're bigger - still risky but less penalty
+                score -= 1000
+                reasons.append(f"⚠️  Head-to-head with smaller snake (-1000)")
+
+        # Penalize being too close to larger/equal snakes
+        if opponent_length >= my_length:
+            if distance_to_opponent == 1:
+                penalty = 2000
+                score -= penalty
+                reasons.append(f"🚫 VERY CLOSE to larger/equal snake! (-{penalty})")
+            elif distance_to_opponent == 2:
+                penalty = 1000
+                score -= penalty
+                reasons.append(f"⚠️  CLOSE to larger/equal snake! (-{penalty})")
+            elif distance_to_opponent <= 3:
+                penalty = 400
+                score -= penalty
+                reasons.append(f"⚠️  Near larger/equal snake (-{penalty})")
+
+        # Check if we're moving adjacent to opponent body segments
+        for segment in snake["body"][:5]:  # Check first 5 segments
+            if manhattan_distance(new_head, segment) == 1:
+                score -= 2000
+                reasons.append(f"🚫 DANGER: Adjacent to opponent body! (-2000)")
                 break
 
     # FOOD SEEKING: ULTRA AGGRESSIVE - Food is LIFE!
