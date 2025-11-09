@@ -133,7 +133,7 @@ def get_all_obstacles(game_state: dict, include_tail: bool = True) -> set:
 
 
 def is_safe_move(pos: dict, game_state: dict, my_length: int) -> bool:
-    """Check if a position is safe (no walls, no snake bodies)"""
+    """Check if a position is safe (no walls, no snake bodies, no head-to-head with larger snakes)"""
     board_width = game_state["board"]["width"]
     board_height = game_state["board"]["height"]
 
@@ -144,6 +144,10 @@ def is_safe_move(pos: dict, game_state: dict, my_length: int) -> bool:
     # Check snake bodies (excluding tails that will move)
     obstacles = get_all_obstacles(game_state, include_tail=False)
     if (pos["x"], pos["y"]) in obstacles:
+        return False
+
+    # CRITICAL: Check head-to-head collision with larger/equal snakes
+    if not avoid_head_collision(pos, game_state, my_length):
         return False
 
     return True
@@ -444,10 +448,10 @@ def predict_opponent_moves(game_state: dict, depth: int = 1) -> list:
         return [likely_moves]
 
 
-def simulate_future(game_state: dict, my_move: str, depth: int = 6, max_depth: int = 6) -> dict:
+def simulate_future(game_state: dict, my_move: str, depth: int = 10, max_depth: int = 10) -> dict:
     """
     Simulate future game states to evaluate survival probability.
-    Optimized for speed - uses limited depth and early termination.
+    Uses 10-move lookahead for comprehensive trap detection.
     Returns evaluation metrics.
     """
     if depth == 0 or game_state["you"] is None:
@@ -560,9 +564,9 @@ def evaluate_move(direction: str, game_state: dict, use_prediction: bool = True)
     if not is_safe_move(new_head, game_state, my_length):
         return {"score": -10000, "reasons": ["INSTANT DEATH: Wall or body collision"], "direction": direction}
 
-    # PREDICTIVE SIMULATION: Simulate 6-8 moves ahead (optimized for speed)
+    # PREDICTIVE SIMULATION: Simulate 10 moves ahead for better trap avoidance
     if use_prediction:
-        prediction_depth = 6  # Simulate 6 moves ahead (balanced speed/accuracy)
+        prediction_depth = 10  # Simulate 10 moves ahead for comprehensive lookahead
         future_outcome = simulate_future(game_state, direction, prediction_depth, prediction_depth)
 
         if not future_outcome["alive"]:
@@ -590,7 +594,7 @@ def evaluate_move(direction: str, game_state: dict, use_prediction: bool = True)
         score += min(available_space * 3, 300)
         reasons.append(f"SPACE: {available_space} cells")
 
-    # FOOD SEEKING: More aggressive food seeking
+    # FOOD SEEKING: AGGRESSIVE food seeking - always go for food when safe!
     if food_list:
         nearest_food = min(food_list, key=lambda f: manhattan_distance(new_head, f))
 
@@ -600,24 +604,30 @@ def evaluate_move(direction: str, game_state: dict, use_prediction: bool = True)
         if my_health < 30:
             # Critical - MUST get food
             if path_to_food:
-                score += 1000 - len(path_to_food) * 50
+                score += 2000 - len(path_to_food) * 100
                 reasons.append(f"CRITICAL: Food in {len(path_to_food)} moves")
             else:
-                score -= 500
+                score -= 1000
                 reasons.append("CRITICAL: No food path!")
         elif my_health < 70:
             # Should get food soon
             if path_to_food:
-                score += 500 - len(path_to_food) * 20
+                score += 1000 - len(path_to_food) * 50
                 reasons.append(f"HUNGRY: Food in {len(path_to_food)} moves")
             else:
-                score -= 100
+                score -= 200
                 reasons.append("HUNGRY: No food path")
         else:
-            # Healthy but still seek food opportunistically
-            if path_to_food and len(path_to_food) < 5:
-                score += 200 - len(path_to_food) * 10
-                reasons.append(f"Food nearby ({len(path_to_food)} moves)")
+            # Healthy - STILL AGGRESSIVELY SEEK FOOD when safe!
+            # If we have good space and prediction shows we survive, GO FOR FOOD!
+            if path_to_food:
+                # Much higher bonus for going toward food even when healthy
+                food_bonus = 800 - len(path_to_food) * 30
+                score += food_bonus
+                reasons.append(f"SAFE FOOD: {len(path_to_food)} moves away (+{food_bonus})")
+            else:
+                # Small penalty for not having food path
+                score -= 50
 
     # TAIL CHASING: Safe when healthy
     if my_health > 50 and len(my_body) > 3:
