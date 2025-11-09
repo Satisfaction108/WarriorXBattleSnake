@@ -1303,7 +1303,8 @@ def evaluate_move(direction: str, game_state: dict, use_prediction: bool = True)
             food, path, food_safety = best_food
 
             # Check if this move is on the path to food
-            if len(path) > 0 and coords_equal(new_head, path[0]):
+            # path[0] is a direction string like "up", "down", etc.
+            if len(path) > 0 and path[0] == direction:
                 # We're moving toward food!
                 path_bonus = 100000 + (urgency * 10000) + best_food_score
                 score += path_bonus
@@ -1400,11 +1401,13 @@ def evaluate_move(direction: str, game_state: dict, use_prediction: bool = True)
     # PHASE 7: SPACE CONTROL & VORONOI
     # ========================================================================
 
-    # Calculate Voronoi space control
-    voronoi_score = calculate_voronoi_space(new_head, game_state)
-    if voronoi_score > 0:
-        score += min(voronoi_score * 100, 10000)
-        reasons.append(f"🗺️  TERRITORY: Controlling {voronoi_score} cells")
+    # Calculate Voronoi space control for all snakes
+    voronoi_spaces = calculate_voronoi_space(game_state)
+    my_id = game_state["you"]["id"]
+    if my_id in voronoi_spaces:
+        my_voronoi = voronoi_spaces[my_id]
+        score += min(my_voronoi * 50, 5000)
+        reasons.append(f"🗺️  TERRITORY: Controlling {my_voronoi} cells")
 
     # ========================================================================
     # PHASE 8: PREDICTIVE SIMULATION (Late game only)
