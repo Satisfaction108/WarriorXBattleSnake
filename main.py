@@ -1172,9 +1172,14 @@ def evaluate_move(direction: str, game_state: dict, use_prediction: bool = True)
 
     if is_early_game:
         # EARLY GAME: Only penalize if NO escapes at all
+        # BUT make the penalty HUGE to override food bonuses!
         if future_safe_moves == 0:
-            score -= 5000  # Reduced - we need to take risks for food
-            reasons.append(f"⚠️  TRAP: No escape routes! (-5000)")
+            score -= 150000  # MASSIVE penalty - even bigger than food bonus!
+            reasons.append(f"💀 DEATH TRAP: No escape routes! (-150000)")
+        elif future_safe_moves == 1:
+            # 1 escape is risky but acceptable for food
+            score -= 2000
+            reasons.append(f"⚠️  RISKY: Only 1 escape route (-2000)")
         else:
             score += future_safe_moves * 100
             reasons.append(f"✓ SAFE: {future_safe_moves} escape routes (+{future_safe_moves * 100})")
@@ -1405,6 +1410,15 @@ def evaluate_move(direction: str, game_state: dict, use_prediction: bool = True)
                         score -= 2000
                         reasons.append("⚠️  URGENT: No food path!")
                 # Early game: Don't penalize - just keep moving!
+                # But give bonus for moving toward ANY food
+                if is_early_game and food_list:
+                    nearest_food = min(food_list, key=lambda f: manhattan_distance(my_head, f))
+                    current_dist = manhattan_distance(my_head, nearest_food)
+                    new_dist = manhattan_distance(new_head, nearest_food)
+                    if new_dist < current_dist:
+                        # Moving toward food even without clear path
+                        score += 2000
+                        reasons.append(f"🍎 EARLY GAME: Moving toward food (+2000)")
         elif food_value > 200:
             # High value food exists but we're not seeking it yet
             # This is for truly opportunistic eating (nearby safe food)
@@ -1419,20 +1433,39 @@ def evaluate_move(direction: str, game_state: dict, use_prediction: bool = True)
             score += 150  # Increased from 100
             reasons.append("Following tail (safe strategy)")
 
+    # CENTER CONTROL: ALWAYS important, especially in early game!
+    center_x = board_width // 2
+    center_y = board_height // 2
+    center = {"x": center_x, "y": center_y}
+    dist_to_center = manhattan_distance(new_head, center)
+    current_dist_to_center = manhattan_distance(my_head, center)
+
+    # Reward being near center and moving toward it
+    if is_early_game:
+        # EARLY GAME: Center control is CRITICAL for survival
+        # Being in center gives more escape options and prevents getting cornered
+        if dist_to_center <= 2:
+            # Very close to center
+            score += 3000
+            reasons.append("🎯 CENTER CONTROL: At center! (+3000)")
+        elif dist_to_center < current_dist_to_center:
+            # Moving toward center
+            score += 1500
+            reasons.append("🎯 CENTER CONTROL: Moving to center (+1500)")
+        elif dist_to_center > board_width // 2 + 2:
+            # Too far from center - penalize
+            score -= 1000
+            reasons.append("⚠️  TOO FAR from center (-1000)")
+    else:
+        # Late game: Center still important but less critical
+        if dist_to_center < current_dist_to_center:
+            score += 200
+            reasons.append("🎯 Moving to center (+200)")
+
     # AGGRESSIVE/DEFENSIVE MODE
     is_aggressive = should_play_aggressive(game_state)
 
     if is_aggressive:
-        # Aggressive mode: seek center, cut off opponents
-        center_x = board_width // 2
-        center_y = board_height // 2
-        center = {"x": center_x, "y": center_y}
-        dist_to_center = manhattan_distance(new_head, center)
-
-        # Reward moving toward center
-        if dist_to_center < manhattan_distance(my_head, center):
-            score += 200
-            reasons.append("⚔️  AGGRESSIVE: Moving to center (+200)")
 
         # Reward cutting off opponents
         for snake in game_state["board"]["snakes"]:
