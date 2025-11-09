@@ -553,17 +553,18 @@ def prioritize_food(game_state: dict, position: dict) -> tuple:
     if not food_list:
         return (False, None, 0, 0)
 
-    # Calculate urgency based on health
-    if my_health < 15:
-        urgency = 10  # CRITICAL
-    elif my_health < 30:
-        urgency = 7   # HIGH
-    elif my_health < 50:
-        urgency = 4   # MEDIUM
-    elif my_health < 70:
-        urgency = 2   # LOW
+    # Calculate urgency based on health - MORE AGGRESSIVE THRESHOLDS
+    # We need to seek food earlier to avoid starvation
+    if my_health < 20:
+        urgency = 10  # CRITICAL - will die very soon
+    elif my_health < 40:
+        urgency = 8   # VERY HIGH - need food urgently
+    elif my_health < 60:
+        urgency = 6   # HIGH - should seek food
+    elif my_health < 80:
+        urgency = 4   # MEDIUM - start looking for food
     else:
-        urgency = 1   # ALWAYS some desire to grow
+        urgency = 2   # LOW - but still seek to grow
 
     # Calculate size advantage/disadvantage
     opponents = [s for s in game_state["board"]["snakes"] if s["id"] != my_snake["id"]]
@@ -646,7 +647,8 @@ def prioritize_food(game_state: dict, position: dict) -> tuple:
         # No reachable food - don't seek even if urgent
         should_seek = False
     else:
-        should_seek = best_value > 0 or urgency >= 7
+        # Seek food more aggressively - at urgency 4 or higher (health < 80)
+        should_seek = best_value > 0 or urgency >= 4
 
     return (should_seek, best_food, urgency, best_value)
 
@@ -927,7 +929,7 @@ def evaluate_move(direction: str, game_state: dict, use_prediction: bool = True)
     # Get obstacles for flood fill (excluding tails)
     obstacles = get_all_obstacles(game_state, include_tail=False)
 
-    # IMMEDIATE SPACE: Evaluate available space - BE CONSERVATIVE!
+    # IMMEDIATE SPACE: Evaluate available space - BE VERY CONSERVATIVE!
     available_space = flood_fill(new_head, board_width, board_height, obstacles)
 
     # Need MORE space than just our length to be safe
@@ -935,19 +937,19 @@ def evaluate_move(direction: str, game_state: dict, use_prediction: bool = True)
 
     if available_space < my_length:
         # DEATH TRAP - not enough space to even fit!
-        score -= 5000
+        score -= 8000  # Increased from 5000
         reasons.append(f"🚫 DEATH TRAP: Only {available_space} spaces (need {my_length})")
     elif available_space < my_length * 2:
         # Very tight - dangerous!
-        score -= 2000
+        score -= 4000  # Increased from 2000
         reasons.append(f"⚠️  VERY TIGHT: {available_space} spaces (risky!)")
     elif available_space < safe_space_needed:
         # Somewhat tight - be careful
-        score -= 800
+        score -= 1500  # Increased from 800
         reasons.append(f"⚠️  TIGHT: {available_space} spaces (need {safe_space_needed})")
     else:
-        # Good space - reward it
-        score += min(available_space * 5, 500)
+        # Good space - reward it more
+        score += min(available_space * 8, 800)  # Increased from *5, 500
         reasons.append(f"✓ SPACE: {available_space} cells")
 
     # FUTURE MOBILITY: Check if we'll have escape routes after this move
@@ -970,20 +972,20 @@ def evaluate_move(direction: str, game_state: dict, use_prediction: bool = True)
 
     if future_safe_moves == 0:
         # NO ESCAPE ROUTES - this is a trap!
-        score -= 6000
-        reasons.append(f"🚫 TRAP: No escape routes! (-6000)")
+        score -= 10000  # Increased from 6000 - this is almost certain death
+        reasons.append(f"🚫 TRAP: No escape routes! (-10000)")
     elif future_safe_moves == 1:
         # Only one escape route - very risky!
-        score -= 2500
-        reasons.append(f"⚠️  RISKY: Only 1 escape route (-2500)")
+        score -= 4000  # Increased from 2500
+        reasons.append(f"⚠️  RISKY: Only 1 escape route (-4000)")
     elif future_safe_moves == 2:
         # Two escape routes - okay but not great
-        score -= 500
-        reasons.append(f"⚠️  Limited: 2 escape routes (-500)")
+        score -= 1000  # Increased from 500
+        reasons.append(f"⚠️  Limited: 2 escape routes (-1000)")
     else:
         # Multiple escape routes - good!
-        score += 300
-        reasons.append(f"✓ SAFE: {future_safe_moves} escape routes (+300)")
+        score += 500  # Increased from 300
+        reasons.append(f"✓ SAFE: {future_safe_moves} escape routes (+500)")
 
     # EDGE AWARENESS: Avoid getting trapped against walls, especially when opponents are nearby
     distance_to_left_wall = new_head["x"]
@@ -1038,16 +1040,16 @@ def evaluate_move(direction: str, game_state: dict, use_prediction: bool = True)
     # ADVANCED OPPONENT ANALYSIS: Threat mapping and pursuit
     threat_tiles, pursue_tiles = get_opponent_threat_tiles(game_state, my_length)
     new_head_tuple = (new_head["x"], new_head["y"])
-    
+
     # Check if we're moving into a threat tile (dangerous head-to-head zone)
     if new_head_tuple in threat_tiles:
-        score -= 4000
-        reasons.append(f"🚫 THREAT ZONE: Opponent head-to-head danger! (-4000)")
-    
+        score -= 8000  # Increased from 4000 - head-to-head with equal/larger is DEATH
+        reasons.append(f"🚫 THREAT ZONE: Opponent head-to-head danger! (-8000)")
+
     # Check if we're moving into a pursue tile (we can dominate smaller snake)
     if new_head_tuple in pursue_tiles:
-        score += 2000
-        reasons.append(f"⚔️  DOMINATE: Head-to-head with smaller snake! (+2000)")
+        score += 3000  # Increased from 2000 - be more aggressive when we're bigger
+        reasons.append(f"⚔️  DOMINATE: Head-to-head with smaller snake! (+3000)")
 
     # OPPONENT PROXIMITY: Avoid getting boxed in by other snakes
     for snake in game_state["board"]["snakes"]:
@@ -1077,18 +1079,18 @@ def evaluate_move(direction: str, game_state: dict, use_prediction: bool = True)
                         reasons.append(f"⚔️  DENY FOOD to smaller snake (+250)")
                         break
 
-        # Penalize being too close to larger/equal snakes
+        # Penalize being too close to larger/equal snakes - INCREASED PENALTIES
         elif opponent_length >= my_length:
             if distance_to_opponent == 1:
-                penalty = 2000
+                penalty = 5000  # Increased from 2000 - extremely dangerous
                 score -= penalty
                 reasons.append(f"🚫 VERY CLOSE to larger/equal snake! (-{penalty})")
             elif distance_to_opponent == 2:
-                penalty = 1000
+                penalty = 2500  # Increased from 1000
                 score -= penalty
                 reasons.append(f"⚠️  CLOSE to larger/equal snake! (-{penalty})")
             elif distance_to_opponent <= 3:
-                penalty = 400
+                penalty = 1000  # Increased from 400
                 score -= penalty
                 reasons.append(f"⚠️  Near larger/equal snake (-{penalty})")
 
@@ -1117,8 +1119,8 @@ def evaluate_move(direction: str, game_state: dict, use_prediction: bool = True)
 
         if eating_food:
             # EATING FOOD THIS TURN = MASSIVE BONUS!
-            # Use composite food value + urgency scaling
-            food_bonus = 8000 + (urgency * 1000) + max(food_value, 0)
+            # Use composite food value + urgency scaling - INCREASED
+            food_bonus = 10000 + (urgency * 1500) + max(food_value, 0)  # Increased from 8000 + urgency*1000
             score += food_bonus
             reasons.append(f"🍎🍎🍎 EATING FOOD! Urgency:{urgency} Value:{food_value} (+{food_bonus})")
         elif should_seek and best_food:
@@ -1128,30 +1130,31 @@ def evaluate_move(direction: str, game_state: dict, use_prediction: bool = True)
 
             if path_to_food:
                 # Use the composite food value score directly
-                # Add urgency boost for critical situations
-                path_bonus = max(food_value // 2, urgency * 300)
+                # Add urgency boost for critical situations - INCREASED
+                path_bonus = max(food_value // 2, urgency * 500)  # Increased from urgency * 300
                 score += path_bonus
                 reasons.append(f"🍎 FOOD SEEK: {len(path_to_food)} moves, value:{food_value} (+{path_bonus})")
             else:
-                # No path to prioritized food
-                if urgency > 7:
-                    score -= 3000
+                # No path to prioritized food - INCREASED PENALTIES
+                if urgency >= 8:  # Changed from > 7
+                    score -= 5000  # Increased from 3000
                     reasons.append("💀 CRITICAL: No food path!")
-                elif urgency > 3:
-                    score -= 1000
+                elif urgency >= 4:  # Changed from > 3
+                    score -= 2000  # Increased from 1000
                     reasons.append("⚠️  URGENT: No food path!")
         elif food_value > 200:
             # High value food exists but we're not seeking it yet
             # This is for truly opportunistic eating (nearby safe food)
-            score += food_value // 3
-            reasons.append(f"🍎 OPPORTUNISTIC: High-value food nearby (+{food_value // 3})")
+            score += food_value // 2  # Increased from // 3
+            reasons.append(f"🍎 OPPORTUNISTIC: High-value food nearby (+{food_value // 2})")
 
-    # TAIL CHASING: Safe when healthy
-    if my_health > 50 and len(my_body) > 3:
+    # TAIL CHASING: Safe when healthy and not seeking food urgently
+    # Only follow tail if we have good health and aren't urgently seeking food
+    if my_health > 70 and urgency < 4 and len(my_body) > 3:
         my_tail = my_body[-1]
         if manhattan_distance(new_head, my_tail) <= 2:
-            score += 100
-            reasons.append("Following tail")
+            score += 150  # Increased from 100
+            reasons.append("Following tail (safe strategy)")
 
     # AGGRESSIVE/DEFENSIVE MODE
     is_aggressive = should_play_aggressive(game_state)
