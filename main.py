@@ -146,6 +146,15 @@ def is_safe_move(pos: dict, game_state: dict, my_length: int) -> bool:
     if (pos["x"], pos["y"]) in obstacles:
         return False
 
+    # EXTRA CHECK: Make sure we're not moving into our own body (even with tail excluded)
+    my_body = game_state["you"]["body"]
+    for i, segment in enumerate(my_body):
+        # Skip the tail (it will move), but check all other segments
+        if i == len(my_body) - 1:
+            continue
+        if coords_equal(pos, segment):
+            return False
+
     # CRITICAL: Check head-to-head collision with larger/equal snakes
     if not avoid_head_collision(pos, game_state, my_length):
         return False
@@ -385,6 +394,171 @@ def is_snake_alive(snake: dict, all_snakes: list, board_width: int, board_height
 
 
 # ============================================================================
+# VORONOI SPACE CONTROL - Calculate which areas each snake controls
+# ============================================================================
+
+def calculate_voronoi_space(game_state: dict) -> dict:
+    """
+    Calculate Voronoi space control for each snake.
+    Returns dict mapping snake_id to number of cells they control.
+    A cell is controlled by the snake that can reach it first.
+    """
+    board_width = game_state["board"]["width"]
+    board_height = game_state["board"]["height"]
+    snakes = game_state["board"]["snakes"]
+
+    if not snakes:
+        return {}
+
+    # Map each cell to (distance, snake_id) - which snake can reach it fastest
+    cell_ownership = {}
+
+    for snake in snakes:
+        head = snake["body"][0]
+        # BFS from each snake's head
+        queue = deque([(head, 0)])
+        visited = {(head["x"], head["y"])}
+
+        while queue:
+            pos, dist = queue.popleft()
+            cell_key = (pos["x"], pos["y"])
+
+            # Claim cell if we're first or tied (but we'll count ties as shared)
+            if cell_key not in cell_ownership or dist < cell_ownership[cell_key][0]:
+                cell_ownership[cell_key] = (dist, snake["id"])
+            elif dist == cell_ownership[cell_key][0]:
+                # Tie - mark as contested
+                cell_ownership[cell_key] = (dist, "contested")
+
+            # Explore neighbors
+            for neighbor in get_neighbors(pos, board_width, board_height):
+                neighbor_key = (neighbor["x"], neighbor["y"])
+                if neighbor_key not in visited:
+                    visited.add(neighbor_key)
+                    queue.append((neighbor, dist + 1))
+
+    # Count cells controlled by each snake
+    control_count = {snake["id"]: 0 for snake in snakes}
+    for (dist, owner) in cell_ownership.values():
+        if owner != "contested" and owner in control_count:
+            control_count[owner] += 1
+
+    return control_count
+
+
+def calculate_area_control_score(game_state: dict, my_id: str) -> float:
+    """
+    Calculate our area control advantage.
+    Returns positive if we control more space, negative if opponents do.
+    """
+    control = calculate_voronoi_space(game_state)
+    if not control:
+        return 0.0
+
+    my_control = control.get(my_id, 0)
+    total_control = sum(control.values())
+
+    if total_control == 0:
+        return 0.0
+
+    # Return our percentage of total control (0.0 to 1.0)
+    return my_control / total_control
+
+
+def should_play_aggressive(game_state: dict) -> bool:
+    """
+    Determine if we should play aggressively or defensively.
+    Aggressive: We're bigger than average, high health, control more space
+    Defensive: We're smaller, low health, less space control
+    """
+    my_snake = game_state["you"]
+    my_length = len(my_snake["body"])
+    my_health = my_snake["health"]
+
+    opponents = [s for s in game_state["board"]["snakes"] if s["id"] != my_snake["id"]]
+
+    if not opponents:
+        return True  # No opponents, play aggressive
+
+    avg_opponent_length = sum(len(s["body"]) for s in opponents) / len(opponents)
+
+    # Calculate area control
+    area_control = calculate_area_control_score(game_state, my_snake["id"])
+
+    # Aggressive if:
+    # - We're bigger than average
+    # - We have good health (>50)
+    # - We control more than 40% of space
+    is_bigger = my_length > avg_opponent_length
+    is_healthy = my_health > 50
+    controls_space = area_control > 0.4
+
+    return is_bigger and (is_healthy or controls_space)
+
+
+def prioritize_food(game_state: dict, position: dict) -> tuple:
+    """
+    Smart food prioritization.
+    Returns (should_seek_food, best_food, urgency_score).
+    """
+    my_snake = game_state["you"]
+    my_health = my_snake["health"]
+    my_length = len(my_snake["body"])
+    food_list = game_state["board"]["food"]
+
+    if not food_list:
+        return (False, None, 0)
+
+    # Calculate urgency based on health
+    if my_health < 15:
+        urgency = 10  # CRITICAL
+    elif my_health < 30:
+        urgency = 7   # HIGH
+    elif my_health < 50:
+        urgency = 4   # MEDIUM
+    elif my_health < 70:
+        urgency = 2   # LOW
+    else:
+        urgency = 0   # Not urgent
+
+    # Find nearest food
+    obstacles = get_all_obstacles(game_state, include_tail=False)
+    board_width = game_state["board"]["width"]
+    board_height = game_state["board"]["height"]
+
+    best_food = None
+    best_score = float('inf')
+
+    for food in food_list:
+        # Calculate actual path distance (not just Manhattan)
+        path_dist = bfs_distance(position, food, board_width, board_height, obstacles)
+
+        if path_dist == -1:
+            continue  # Unreachable
+
+        # Check if any opponent is closer to this food
+        opponent_threat = 0
+        for snake in game_state["board"]["snakes"]:
+            if snake["id"] == my_snake["id"]:
+                continue
+
+            opp_dist = manhattan_distance(snake["body"][0], food)
+            if opp_dist < path_dist:
+                opponent_threat += 1  # Opponent is closer
+
+        # Score: prefer closer food with less opponent threat
+        food_score = path_dist * 10 + opponent_threat * 5
+
+        if food_score < best_score:
+            best_score = food_score
+            best_food = food
+
+    should_seek = urgency > 3 or (urgency > 0 and best_food is not None)
+
+    return (should_seek, best_food, urgency)
+
+
+# ============================================================================
 # ADVANCED MOVE LOGIC WITH PREDICTION
 # ============================================================================
 
@@ -448,98 +622,118 @@ def predict_opponent_moves(game_state: dict, depth: int = 1) -> list:
         return [likely_moves]
 
 
-def deep_simulation(game_state: dict, my_move: str, depth: int) -> dict:
+def evaluate_game_state(game_state: dict, my_id: str) -> float:
     """
-    Deep forward simulation with smart opponent prediction.
-    For turn i, simulates next 'depth' moves forward.
-    At each turn, we pick our best move and opponents pick their likely moves.
-
-    Returns: {"score": int, "alive": bool, "health": int, "space": int}
+    Comprehensive evaluation of a game state.
+    Returns a score where higher is better for us.
     """
-    current_state = game_state
-    current_move = my_move
+    if game_state["you"] is None:
+        return -1000000.0  # We're dead
 
-    for _ in range(depth):
-        if current_state["you"] is None:
-            # We died
-            return {"score": -1000000, "alive": False, "health": 0, "space": 0}
+    my_snake = game_state["you"]
+    my_head = my_snake["body"][0]
+    my_health = my_snake["health"]
+    my_length = len(my_snake["body"])
 
-        # Predict opponent moves (simple heuristic: first safe move)
-        opponent_moves = {}
-        for snake in current_state["board"]["snakes"]:
-            if snake["id"] == current_state["you"]["id"]:
-                continue
+    board_width = game_state["board"]["width"]
+    board_height = game_state["board"]["height"]
 
-            snake_moves = get_possible_moves(snake, current_state["board"]["width"],
-                                            current_state["board"]["height"])
-            if snake_moves:
-                opponent_moves[snake["id"]] = snake_moves[0]
+    # Calculate available space
+    obstacles = get_all_obstacles(game_state, include_tail=False)
+    my_space = flood_fill(my_head, board_width, board_height, obstacles)
 
-        # Simulate one turn forward
-        current_state = simulate_game_state(current_state, current_move, opponent_moves)
+    # Calculate Voronoi control
+    area_control = calculate_area_control_score(game_state, my_id)
 
-        if current_state["you"] is None:
-            # We died during simulation
-            return {"score": -1000000, "alive": False, "health": 0, "space": 0}
+    # Count opponents
+    opponents = [s for s in game_state["board"]["snakes"] if s["id"] != my_id]
+    num_opponents = len(opponents)
 
-        # For next turn, pick our best move (greedy)
-        my_possible_moves = get_possible_moves(current_state["you"],
-                                               current_state["board"]["width"],
-                                               current_state["board"]["height"])
+    # Calculate relative size advantage
+    size_advantage = 0.0
+    if opponents:
+        avg_opponent_length = sum(len(s["body"]) for s in opponents) / len(opponents)
+        size_advantage = my_length - avg_opponent_length
 
-        if not my_possible_moves:
-            # No moves available - we'll die
-            return {"score": -1000000, "alive": False, "health": 0, "space": 0}
+    # Distance to nearest food
+    food_score = 0.0
+    if game_state["board"]["food"] and my_health < 70:
+        nearest_food = min(game_state["board"]["food"],
+                          key=lambda f: manhattan_distance(my_head, f))
+        food_dist = manhattan_distance(my_head, nearest_food)
+        food_score = max(0, 20 - food_dist)  # Closer food = higher score
 
-        # Pick move with most space (simple heuristic for speed)
-        best_space = -1
-        best_next_move = my_possible_moves[0]
+    # Combine all factors
+    score = (
+        my_health * 10.0 +           # Health is important
+        my_space * 5.0 +              # Space is critical
+        my_length * 100.0 +           # Length gives advantage
+        area_control * 1000.0 +       # Voronoi control is very important
+        size_advantage * 50.0 +       # Being bigger is good
+        food_score * 5.0 +            # Food when hungry
+        -num_opponents * 50.0         # Fewer opponents is better
+    )
+
+    return score
+
+
+def minimax_alpha_beta(game_state: dict, my_id: str, depth: int, alpha: float, beta: float,
+                       maximizing: bool, my_move: str = None) -> tuple:
+    """
+    Minimax with alpha-beta pruning.
+    Returns (score, best_move).
+    """
+    # Base case: max depth or game over
+    if depth == 0 or game_state["you"] is None:
+        return (evaluate_game_state(game_state, my_id), my_move)
+
+    # Get our possible moves
+    if game_state["you"] is None:
+        return (-1000000.0, None)
+
+    my_possible_moves = get_possible_moves(game_state["you"],
+                                           game_state["board"]["width"],
+                                           game_state["board"]["height"])
+
+    if not my_possible_moves:
+        return (-1000000.0, None)
+
+    if maximizing:
+        max_eval = float('-inf')
+        best_move = my_possible_moves[0]
 
         for move in my_possible_moves:
-            # Calculate where this move leads
-            test_head = {"x": current_state["you"]["body"][0]["x"],
-                        "y": current_state["you"]["body"][0]["y"]}
-            if move == "up":
-                test_head["y"] += 1
-            elif move == "down":
-                test_head["y"] -= 1
-            elif move == "left":
-                test_head["x"] -= 1
-            elif move == "right":
-                test_head["x"] += 1
+            # Predict opponent moves (use heuristic for speed)
+            opponent_moves = {}
+            for snake in game_state["board"]["snakes"]:
+                if snake["id"] == my_id:
+                    continue
+                snake_moves = get_possible_moves(snake, game_state["board"]["width"],
+                                                game_state["board"]["height"])
+                if snake_moves:
+                    # Assume opponent moves toward food or center
+                    opponent_moves[snake["id"]] = snake_moves[0]
 
-            # Count space
-            obstacles = get_all_obstacles(current_state, include_tail=False)
-            space = flood_fill(test_head, current_state["board"]["width"],
-                             current_state["board"]["height"], obstacles)
+            # Simulate
+            new_state = simulate_game_state(game_state, move, opponent_moves)
 
-            if space > best_space:
-                best_space = space
-                best_next_move = move
+            # Recurse
+            eval_score, _ = minimax_alpha_beta(new_state, my_id, depth - 1, alpha, beta, False, move)
 
-        current_move = best_next_move
+            if eval_score > max_eval:
+                max_eval = eval_score
+                best_move = move
 
-    # Reached end of simulation - evaluate final state
-    if current_state["you"] is None:
-        return {"score": -1000000, "alive": False, "health": 0, "space": 0}
+            alpha = max(alpha, eval_score)
+            if beta <= alpha:
+                break  # Beta cutoff
 
-    my_head = current_state["you"]["body"][0]
-    obstacles = get_all_obstacles(current_state, include_tail=False)
-    space = flood_fill(my_head, current_state["board"]["width"],
-                      current_state["board"]["height"], obstacles)
-
-    health = current_state["you"]["health"]
-    length = len(current_state["you"]["body"])
-
-    # Score based on survival, health, space, and length
-    score = health * 100 + space * 10 + length * 50
-
-    return {
-        "score": score,
-        "alive": True,
-        "health": health,
-        "space": space
-    }
+        return (max_eval, best_move)
+    else:
+        # Minimizing (opponent's turn - but we simplify by just evaluating)
+        # In real minimax, opponents would minimize our score
+        # For speed, we just continue with our perspective
+        return minimax_alpha_beta(game_state, my_id, depth - 1, alpha, beta, True, my_move)
 
 
 def evaluate_move(direction: str, game_state: dict, use_prediction: bool = True) -> dict:
@@ -573,20 +767,65 @@ def evaluate_move(direction: str, game_state: dict, use_prediction: bool = True)
     if not is_safe_move(new_head, game_state, my_length):
         return {"score": -10000, "reasons": ["INSTANT DEATH: Wall or body collision"], "direction": direction}
 
-    # PREDICTIVE SIMULATION: Use deep simulation with 12-move lookahead (balanced)
+    # PREDICTIVE SIMULATION: Use minimax with alpha-beta pruning
     if use_prediction:
-        prediction_depth = 12  # 12-move lookahead for balance of speed and accuracy
-        future_outcome = deep_simulation(game_state, direction, prediction_depth)
+        # Adaptive depth: deeper search in critical situations
+        num_opponents = len([s for s in game_state["board"]["snakes"] if s["id"] != game_state["you"]["id"]])
 
-        if not future_outcome["alive"] or future_outcome["score"] < -500000:
-            # DEATH PREDICTION = ABSOLUTELY AVOID THIS!
-            score -= 15000
-            reasons.append(f"💀💀💀 PREDICTION: DEATH in {prediction_depth} moves! (-15000)")
+        if my_health < 20 or num_opponents == 1:
+            prediction_depth = 8  # Deeper search when critical or 1v1
+        elif num_opponents <= 2:
+            prediction_depth = 7  # Medium depth for few opponents
         else:
-            # Reward based on predicted score (which includes health, space, length)
-            prediction_bonus = min(future_outcome["score"] // 10, 3000)
-            score += prediction_bonus
-            reasons.append(f"✓ PREDICTION: Score {future_outcome['score']} (health:{future_outcome['health']}, space:{future_outcome['space']}) (+{prediction_bonus})")
+            prediction_depth = 6  # Standard depth for many opponents
+
+        # Simulate this move first with smart opponent prediction
+        opponent_moves = {}
+        for snake in game_state["board"]["snakes"]:
+            if snake["id"] == game_state["you"]["id"]:
+                continue
+            snake_moves = get_possible_moves(snake, board_width, board_height)
+            if snake_moves:
+                # Predict opponent's most likely move (toward food or toward us)
+                best_opp_move = snake_moves[0]
+                if food_list and snake["health"] < 70:
+                    # Opponent likely going for food
+                    nearest_food = min(food_list, key=lambda f: manhattan_distance(snake["body"][0], f))
+                    best_dist = float('inf')
+                    for move in snake_moves:
+                        test_pos = {"x": snake["body"][0]["x"], "y": snake["body"][0]["y"]}
+                        if move == "up":
+                            test_pos["y"] += 1
+                        elif move == "down":
+                            test_pos["y"] -= 1
+                        elif move == "left":
+                            test_pos["x"] -= 1
+                        elif move == "right":
+                            test_pos["x"] += 1
+                        dist = manhattan_distance(test_pos, nearest_food)
+                        if dist < best_dist:
+                            best_dist = dist
+                            best_opp_move = move
+                opponent_moves[snake["id"]] = best_opp_move
+
+        test_state = simulate_game_state(game_state, direction, opponent_moves)
+
+        if test_state["you"] is None:
+            # We die immediately
+            score -= 15000
+            reasons.append(f"💀💀💀 IMMEDIATE DEATH! (-15000)")
+        else:
+            # Run minimax from this position
+            future_score, _ = minimax_alpha_beta(test_state, game_state["you"]["id"],
+                                                prediction_depth, float('-inf'), float('inf'), True, direction)
+
+            if future_score < -500000:
+                score -= 15000
+                reasons.append(f"💀💀💀 MINIMAX: DEATH predicted! (-15000)")
+            else:
+                prediction_bonus = min(int(future_score // 10), 3000)
+                score += prediction_bonus
+                reasons.append(f"✓ MINIMAX(d={prediction_depth}): Score {int(future_score)} (+{prediction_bonus})")
 
     # Get obstacles for flood fill (excluding tails)
     obstacles = get_all_obstacles(game_state, include_tail=False)
@@ -747,7 +986,9 @@ def evaluate_move(direction: str, game_state: dict, use_prediction: bool = True)
                 reasons.append(f"🚫 DANGER: Adjacent to opponent body! (-2000)")
                 break
 
-    # FOOD SEEKING: ULTRA AGGRESSIVE - Food is LIFE!
+    # FOOD SEEKING: Smart prioritization based on game state
+    should_seek, best_food, urgency = prioritize_food(game_state, new_head)
+
     if food_list:
         # Check if we're moving ONTO food (this move eats it!)
         eating_food = False
@@ -758,54 +999,30 @@ def evaluate_move(direction: str, game_state: dict, use_prediction: bool = True)
 
         if eating_food:
             # EATING FOOD THIS TURN = MASSIVE BONUS!
-            food_bonus = 10000  # Absolutely prioritize eating food!
+            # Scale bonus based on urgency
+            food_bonus = 10000 + (urgency * 1000)
             score += food_bonus
-            reasons.append(f"🍎🍎🍎 EATING FOOD NOW! (+{food_bonus})")
-        else:
-            # Not eating this turn, but check path to nearest food
-            nearest_food = min(food_list, key=lambda f: manhattan_distance(new_head, f))
-
+            reasons.append(f"🍎🍎🍎 EATING FOOD NOW! Urgency:{urgency} (+{food_bonus})")
+        elif should_seek and best_food:
+            # Seeking food based on smart prioritization
             obstacles_with_tail = get_all_obstacles(game_state, include_tail=True)
-            path_to_food = bfs_path(new_head, nearest_food, board_width, board_height, obstacles_with_tail)
+            path_to_food = bfs_path(new_head, best_food, board_width, board_height, obstacles_with_tail)
 
-            if my_health < 30:
-                # CRITICAL - MUST get food or die!
-                if path_to_food:
-                    # Massive bonus for critical food
-                    food_bonus = 5000 - len(path_to_food) * 200
-                    score += food_bonus
-                    reasons.append(f"🍎 CRITICAL FOOD: {len(path_to_food)} moves (+{food_bonus})")
-                else:
+            if path_to_food:
+                # Calculate bonus based on urgency and distance
+                base_bonus = urgency * 500
+                distance_penalty = len(path_to_food) * 50
+                food_bonus = max(base_bonus - distance_penalty, 100)
+                score += food_bonus
+                reasons.append(f"🍎 FOOD SEEK: {len(path_to_food)} moves, urgency:{urgency} (+{food_bonus})")
+            else:
+                # No path to prioritized food
+                if urgency > 7:
                     score -= 3000
                     reasons.append("💀 CRITICAL: No food path!")
-            elif my_health < 70:
-                # Should get food soon
-                if path_to_food:
-                    food_bonus = 3000 - len(path_to_food) * 100
-                    score += food_bonus
-                    reasons.append(f"🍎 HUNGRY: Food in {len(path_to_food)} moves (+{food_bonus})")
-                else:
-                    score -= 500
-                    reasons.append("⚠️  HUNGRY: No food path")
-            else:
-                # Healthy - STILL SUPER AGGRESSIVE FOR FOOD!
-                if path_to_food:
-                    # ADJACENT FOOD (1 move away) = MASSIVE PRIORITY!
-                    if len(path_to_food) == 1:
-                        food_bonus = 4000  # HUGE bonus for adjacent food
-                        score += food_bonus
-                        reasons.append(f"🍎🍎🍎 ADJACENT FOOD! (+{food_bonus})")
-                    elif len(path_to_food) <= 3:
-                        food_bonus = 2500 - len(path_to_food) * 200
-                        score += food_bonus
-                        reasons.append(f"🍎 CLOSE FOOD: {len(path_to_food)} moves (+{food_bonus})")
-                    else:
-                        food_bonus = 1500 - len(path_to_food) * 50
-                        score += food_bonus
-                        reasons.append(f"🍎 Food: {len(path_to_food)} moves (+{food_bonus})")
-                else:
-                    # Penalty for no food path even when healthy
-                    score -= 100
+                elif urgency > 3:
+                    score -= 1000
+                    reasons.append("⚠️  URGENT: No food path!")
 
     # TAIL CHASING: Safe when healthy
     if my_health > 50 and len(my_body) > 3:
@@ -813,6 +1030,42 @@ def evaluate_move(direction: str, game_state: dict, use_prediction: bool = True)
         if manhattan_distance(new_head, my_tail) <= 2:
             score += 100
             reasons.append("Following tail")
+
+    # AGGRESSIVE/DEFENSIVE MODE
+    is_aggressive = should_play_aggressive(game_state)
+
+    if is_aggressive:
+        # Aggressive mode: seek center, cut off opponents
+        center_x = board_width // 2
+        center_y = board_height // 2
+        center = {"x": center_x, "y": center_y}
+        dist_to_center = manhattan_distance(new_head, center)
+
+        # Reward moving toward center
+        if dist_to_center < manhattan_distance(my_head, center):
+            score += 200
+            reasons.append("⚔️  AGGRESSIVE: Moving to center (+200)")
+
+        # Reward cutting off opponents
+        for snake in game_state["board"]["snakes"]:
+            if snake["id"] == game_state["you"]["id"]:
+                continue
+
+            opp_head = snake["body"][0]
+            # If we're between opponent and food, bonus
+            if food_list:
+                nearest_food = min(food_list, key=lambda f: manhattan_distance(opp_head, f))
+                our_dist_to_food = manhattan_distance(new_head, nearest_food)
+                opp_dist_to_food = manhattan_distance(opp_head, nearest_food)
+
+                if our_dist_to_food < opp_dist_to_food:
+                    score += 150
+                    reasons.append("⚔️  AGGRESSIVE: Cutting off opponent food (+150)")
+                    break
+    else:
+        # Defensive mode: maximize space, avoid opponents
+        score += available_space * 2  # Extra space bonus
+        reasons.append(f"🛡️  DEFENSIVE: Space priority (+{available_space * 2})")
 
     # CENTER CONTROL
     center_x = board_width // 2
@@ -876,13 +1129,23 @@ def move(game_state: typing.Dict) -> typing.Dict:
                 new_head["y"] < 0 or new_head["y"] >= board_height):
                 survival_score = -100000  # Wall = definitely bad
             else:
-                # Simulate and see how long we survive using deep simulation
-                future_outcome = deep_simulation(game_state, direction, 12)
-                if future_outcome["alive"] and future_outcome["score"] > -500000:
-                    survival_score = 50000 + future_outcome["score"]
+                # Use minimax to evaluate survival time
+                opponent_moves = {}
+                for snake in game_state["board"]["snakes"]:
+                    if snake["id"] == game_state["you"]["id"]:
+                        continue
+                    snake_moves = get_possible_moves(snake, game_state["board"]["width"],
+                                                    game_state["board"]["height"])
+                    if snake_moves:
+                        opponent_moves[snake["id"]] = snake_moves[0]
+
+                test_state = simulate_game_state(game_state, direction, opponent_moves)
+                if test_state["you"] is not None:
+                    future_score, _ = minimax_alpha_beta(test_state, game_state["you"]["id"],
+                                                        6, float('-inf'), float('inf'), True, direction)
+                    survival_score = 50000 + int(future_score)
                 else:
-                    # Even if we die, prefer moves that give us more space/health before death
-                    survival_score = max(future_outcome["score"], -50000)
+                    survival_score = -50000
 
             survival_evaluations.append({
                 "direction": direction,
@@ -904,6 +1167,42 @@ def move(game_state: typing.Dict) -> typing.Dict:
         print(f"  {eval['direction']:>5}: {eval['score']:>6} - {reasons_str}")
     print(f"\n>>> CHOSEN: {best_move['direction'].upper()} (score: {best_move['score']})")
 
+    # FINAL SAFETY CHECK: Verify the chosen move won't cause immediate death
+    chosen_direction = best_move["direction"]
+    my_head = game_state["you"]["body"][0]
+    my_length = len(game_state["you"]["body"])
+
+    final_head = {"x": my_head["x"], "y": my_head["y"]}
+    if chosen_direction == "up":
+        final_head["y"] += 1
+    elif chosen_direction == "down":
+        final_head["y"] -= 1
+    elif chosen_direction == "left":
+        final_head["x"] -= 1
+    elif chosen_direction == "right":
+        final_head["x"] += 1
+
+    # Double-check this move is actually safe
+    if not is_safe_move(final_head, game_state, my_length):
+        print(f"🚨 SAFETY OVERRIDE: {chosen_direction} is NOT SAFE! Finding alternative...")
+
+        # Find first actually safe move
+        for alt_direction in ["up", "down", "left", "right"]:
+            alt_head = {"x": my_head["x"], "y": my_head["y"]}
+            if alt_direction == "up":
+                alt_head["y"] += 1
+            elif alt_direction == "down":
+                alt_head["y"] -= 1
+            elif alt_direction == "left":
+                alt_head["x"] -= 1
+            elif alt_direction == "right":
+                alt_head["x"] += 1
+
+            if is_safe_move(alt_head, game_state, my_length):
+                print(f"   Safety override: Choosing {alt_direction.upper()} instead")
+                chosen_direction = alt_direction
+                break
+
     # Safety check
     if best_move["score"] < -1000:
         print("⚠️  CRITICAL: All moves lead to death! Choosing least bad option.")
@@ -920,7 +1219,7 @@ def move(game_state: typing.Dict) -> typing.Dict:
         shout = "Feeling good!"
 
     return {
-        "move": best_move["direction"],
+        "move": chosen_direction,
         "shout": shout
     }
 
