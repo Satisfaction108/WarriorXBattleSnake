@@ -22,7 +22,16 @@ def run_server(handlers: typing.Dict):
     @app.post("/move")
     def on_move():
         game_state = request.get_json()
-        return handlers["move"](game_state)
+        try:
+            response = handlers["move"](game_state)
+            print(f"✅ SERVER SENDING RESPONSE: {response}")
+            return response
+        except Exception as e:
+            print(f"🚨🚨🚨 EXCEPTION IN MOVE HANDLER: {e}")
+            import traceback
+            traceback.print_exc()
+            # Return a safe default move
+            return {"move": "up", "shout": "ERROR!"}
 
     @app.post("/end")
     def on_end():

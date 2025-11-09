@@ -1288,10 +1288,17 @@ def move(game_state: typing.Dict) -> typing.Dict:
     elif best_move["score"] > 2000:
         shout = "Feeling good!"
 
-    return {
+    response = {
         "move": chosen_direction,
         "shout": shout
     }
+
+    # CRITICAL: Log the exact JSON response being returned
+    import json
+    print(f"\n🚀 RETURNING JSON RESPONSE: {json.dumps(response)}")
+    print(f"🚀 MOVE BEING SENT TO GAME: {chosen_direction.upper()}\n")
+
+    return response
 
 
 # Start server when `python main.py` is run
