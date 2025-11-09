@@ -155,9 +155,9 @@ def is_safe_move(pos: dict, game_state: dict, my_length: int) -> bool:
 
 def avoid_head_collision(pos: dict, game_state: dict, my_length: int) -> bool:
     """
-    Check if moving to pos could result in head-to-head collision with LARGER snake.
-    Returns True if safe, False if dangerous (instant death).
-    Only blocks moves that would definitely lose to a LARGER snake.
+    Check if moving to pos could result in head-to-head collision with LARGER OR EQUAL snake.
+    Returns True if safe, False if dangerous (instant death or mutual death).
+    Blocks moves that would result in head-to-head with larger/equal snakes.
     """
     my_head = game_state["you"]["body"][0]
 
@@ -168,9 +168,10 @@ def avoid_head_collision(pos: dict, game_state: dict, my_length: int) -> bool:
         opponent_head = snake["body"][0]
         opponent_length = len(snake["body"])
 
-        # Only avoid if opponent is STRICTLY LARGER (not equal)
-        if opponent_length <= my_length:
-            continue
+        # CRITICAL: Avoid head-to-head with LARGER OR EQUAL snakes
+        # Equal length = both die = loss for us!
+        if opponent_length < my_length:
+            continue  # Only skip if we're BIGGER
 
         # Check if opponent could move to same position
         opponent_neighbors = get_neighbors(opponent_head,
@@ -178,9 +179,9 @@ def avoid_head_collision(pos: dict, game_state: dict, my_length: int) -> bool:
                                           game_state["board"]["height"])
 
         for opp_move in opponent_neighbors:
-            # Direct head-to-head collision with LARGER snake = instant death
+            # Direct head-to-head collision with LARGER/EQUAL snake = death!
             if coords_equal(pos, opp_move):
-                return False  # Dangerous - opponent is bigger
+                return False  # Dangerous - opponent is bigger or equal
 
     return True
 
@@ -640,6 +641,56 @@ def evaluate_move(direction: str, game_state: dict, use_prediction: bool = True)
         score += 300
         reasons.append(f"✓ SAFE: {future_safe_moves} escape routes (+300)")
 
+    # EDGE AWARENESS: Avoid getting trapped against walls, especially when opponents are nearby
+    distance_to_left_wall = new_head["x"]
+    distance_to_right_wall = board_width - 1 - new_head["x"]
+    distance_to_bottom_wall = new_head["y"]
+    distance_to_top_wall = board_height - 1 - new_head["y"]
+
+    min_distance_to_wall = min(distance_to_left_wall, distance_to_right_wall,
+                                distance_to_bottom_wall, distance_to_top_wall)
+
+    # Check if any opponents are nearby (within 5 spaces)
+    opponents_nearby = False
+    closest_opponent_distance = float('inf')
+    for snake in game_state["board"]["snakes"]:
+        if snake["id"] != game_state["you"]["id"]:
+            opponent_head = snake["body"][0]
+            dist = manhattan_distance(new_head, opponent_head)
+            closest_opponent_distance = min(closest_opponent_distance, dist)
+            if dist <= 5:
+                opponents_nearby = True
+                break
+
+    # Penalize being near walls when opponents are nearby
+    if opponents_nearby:
+        if min_distance_to_wall == 0:
+            # Right against the wall with opponents nearby = VERY DANGEROUS
+            score -= 3000
+            reasons.append(f"🚫 WALL TRAP: Against wall with opponents nearby! (-3000)")
+        elif min_distance_to_wall == 1:
+            # One space from wall with opponents nearby = dangerous
+            score -= 1500
+            reasons.append(f"⚠️  WALL DANGER: 1 space from wall, opponents close (-1500)")
+        elif min_distance_to_wall == 2:
+            # Two spaces from wall with opponents nearby = risky
+            score -= 800
+            reasons.append(f"⚠️  Near wall with opponents close (-800)")
+
+    # Check for corner positions (even more dangerous)
+    in_corner = (distance_to_left_wall <= 1 and distance_to_bottom_wall <= 1) or \
+                (distance_to_left_wall <= 1 and distance_to_top_wall <= 1) or \
+                (distance_to_right_wall <= 1 and distance_to_bottom_wall <= 1) or \
+                (distance_to_right_wall <= 1 and distance_to_top_wall <= 1)
+
+    if in_corner:
+        if opponents_nearby:
+            score -= 4000
+            reasons.append(f"🚫🚫 CORNER TRAP: In corner with opponents! (-4000)")
+        else:
+            score -= 1000
+            reasons.append(f"⚠️  In corner (-1000)")
+
     # OPPONENT PROXIMITY: Avoid getting boxed in by other snakes
     for snake in game_state["board"]["snakes"]:
         if snake["id"] == game_state["you"]["id"]:
@@ -795,6 +846,50 @@ def move(game_state: typing.Dict) -> typing.Dict:
     # Log the decision
     turn = game_state["turn"]
     best_move = move_evaluations[0]
+
+    # DESPERATION MODE: If all moves are terrible, try to find the one that survives longest
+    if best_move["score"] <= -5000:
+        print("⚠️  DESPERATION MODE: All moves look fatal! Finding longest survival...")
+
+        # Re-evaluate each move focusing purely on survival time
+        survival_evaluations = []
+        for direction in ["up", "down", "left", "right"]:
+            my_head = game_state["you"]["body"][0]
+            new_head = {"x": my_head["x"], "y": my_head["y"]}
+            if direction == "up":
+                new_head["y"] += 1
+            elif direction == "down":
+                new_head["y"] -= 1
+            elif direction == "left":
+                new_head["x"] -= 1
+            elif direction == "right":
+                new_head["x"] += 1
+
+            # Check basic validity (walls)
+            board_width = game_state["board"]["width"]
+            board_height = game_state["board"]["height"]
+            if (new_head["x"] < 0 or new_head["x"] >= board_width or
+                new_head["y"] < 0 or new_head["y"] >= board_height):
+                survival_score = -100000  # Wall = definitely bad
+            else:
+                # Simulate and see how long we survive
+                future_outcome = simulate_future(game_state, direction, 15, 15)
+                if future_outcome["alive"]:
+                    survival_score = 50000 + future_outcome["health"] * 100 + future_outcome["space"]
+                else:
+                    # Even if we die, prefer moves that give us more space/health before death
+                    survival_score = future_outcome["health"] * 10 + future_outcome["space"]
+
+            survival_evaluations.append({
+                "direction": direction,
+                "score": survival_score,
+                "reasons": [f"Survival score: {survival_score}"]
+            })
+
+        # Pick the move with best survival
+        survival_evaluations.sort(key=lambda x: x["score"], reverse=True)
+        best_move = survival_evaluations[0]
+        print(f"   Desperation choice: {best_move['direction'].upper()} (survival: {best_move['score']})")
 
     print(f"\n{'='*60}")
     print(f"MOVE {turn} | Health: {game_state['you']['health']} | Length: {len(game_state['you']['body'])}")
