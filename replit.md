@@ -31,12 +31,18 @@ The server runs on port 5000 and is accessible at the Replit webview URL.
 This Battlesnake is ready to be published and registered at [play.battlesnake.com](https://play.battlesnake.com). The public URL from Replit deployment can be used as the Battlesnake endpoint.
 
 ## Recent Changes
-- **Nov 9, 2025 (Latest)**: Major AI improvements for dominance
+- **Nov 9, 2025 (Latest Update)**: Critical bug fixes and strategy rebalancing
+  - **Bug Fixes**: Fixed crashes caused by comparing direction strings with coordinates, fixed Voronoi calculation parameter mismatch
+  - **Balanced Food Strategy**: Food-seeking now conditional on safety - only pursues risky food when desperate (health < 30)
+  - **Enhanced Trap Avoidance**: Increased edge/corner penalties (corners -30k, edges -12k), better escape route evaluation
+  - **Improved Center Control**: Dynamic center scoring that scales with snake size, rewards center dominance
+  - **Safety-First Growth**: Snake will grow aggressively but only when safe - won't suicide for food anymore
+  
+- **Nov 9, 2025 (Earlier)**: Major AI improvements for dominance
   - **Opportunistic Food Eating**: Bot now grabs safe food even when healthy to grow larger
   - **Head-to-Head Mastery**: Threat mapping prevents collisions with larger/equal snakes, pursues smaller snakes aggressively
   - **Size Dominance Strategy**: When bigger, bot chases smaller snakes (up to +900 bonus), denies them food (+250 bonus)
   - **Advanced Food Prioritization**: Composite scoring considers safety, distance, growth benefit, opponent competition, and escape space
-  - **Bug Fixes**: Fixed critical bug where bot would crash when all food is unreachable
   
 - **Nov 9, 2025**: Initial Replit setup
   - Configured Python 3.11 environment
@@ -59,11 +65,12 @@ The AI uses an advanced multi-layered decision-making approach:
 3. **Predictive Analysis**: Minimax with alpha-beta pruning simulates 6-8 moves ahead
 4. **Voronoi Territory Control**: Calculates space dominance for strategic positioning
 
-### Food Strategy (Opportunistic & Smart)
-- **Composite Value Scoring**: Evaluates each food by safety, distance, growth benefit, opponent competition, and escape space after eating
-- **Opportunistic Eating**: Grabs nearby safe food even when healthy (health 70+) to maximize size
-- **Health-Based Urgency**: Critical seeking when health < 15, aggressive when < 30
-- **Safe Escape**: Only eats food with adequate escape routes (10+ cells)
+### Food Strategy (Balanced Growth & Safety)
+- **Conditional Food Pursuit**: Only chases food when it's safe OR health is critical (< 30)
+- **Composite Value Scoring**: Evaluates each food by safety, distance, growth benefit, opponent competition, and escape space
+- **Smart Eating**: Prioritizes safe food; only takes risky food when desperate
+- **Health-Based Urgency**: Critical at < 15 health, high urgency at < 30, balanced otherwise
+- **Safe Escape**: Validates escape routes and available space before committing to food
 
 ### Size Dominance (When Bigger)
 - **Aggressive Pursuit**: Chases smaller snakes with distance-based bonuses (up to +900 points)
@@ -77,6 +84,7 @@ The AI uses an advanced multi-layered decision-making approach:
 
 ### Advanced Features
 - **Anti-Predictability**: Randomizes moves with similar scores, penalizes repetitive patterns
-- **Wall Awareness**: Avoids corners and walls when opponents nearby (up to -4000 penalty)
+- **Enhanced Edge Avoidance**: Strong penalties for corners (-30k) and edges (-12k), warns when near boundaries
 - **Future Mobility**: Evaluates escape routes after each move (needs 3+ safe exits)
+- **Center Control**: Dynamic scoring favoring center positions, scales with snake size for dominance
 - **Desperation Mode**: When all moves look fatal, finds longest survival path
