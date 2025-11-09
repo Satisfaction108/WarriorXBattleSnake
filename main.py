@@ -1352,19 +1352,42 @@ def evaluate_move(direction: str, game_state: dict, use_prediction: bool = True)
     # PHASE 5: POSITIONING & TERRITORY CONTROL
     # ========================================================================
 
-    # Center control - being in center gives more options
+    # Center control - being in center gives more options and board dominance
     center_x = board_width // 2
     center_y = board_height // 2
     center = {"x": center_x, "y": center_y}
     dist_to_center = manhattan_distance(new_head, center)
-
-    # Reward being reasonably close to center (not too aggressive)
-    if dist_to_center <= 3:
-        score += 5000
-        reasons.append("🎯 NEAR CENTER: Good positioning")
+    
+    # Center control becomes more important when we're bigger (can dominate)
+    center_importance = min(my_length, 15) * 400  # Scales with snake length
+    
+    # Reward being close to center - center control is crucial
+    if dist_to_center == 0:
+        # Perfect center position
+        center_bonus = 12000 + center_importance
+        score += center_bonus
+        reasons.append(f"🎯🎯 CENTER CONTROL: Perfect position (+{center_bonus})")
+    elif dist_to_center <= 2:
+        # Very close to center
+        center_bonus = 8000 + center_importance // 2
+        score += center_bonus
+        reasons.append(f"🎯 NEAR CENTER: Excellent positioning (+{center_bonus})")
+    elif dist_to_center <= 4:
+        # Reasonably close
+        score += 4000
+        reasons.append("🎯 CENTER AREA: Good positioning")
     elif dist_to_center > board_width // 2 + 1:
-        score -= 3000
-        reasons.append("⚠️  FAR FROM CENTER: Poor positioning")
+        # Too far from center - penalize
+        distance_penalty = 6000 + (dist_to_center * 500)
+        score -= distance_penalty
+        reasons.append(f"⚠️  FAR FROM CENTER: Poor positioning (-{distance_penalty})")
+    
+    # Extra bonus for moving toward center when far away (unless chasing food)
+    if not eating_food and dist_to_center > 4:
+        current_center_dist = manhattan_distance(my_head, center)
+        if dist_to_center < current_center_dist:
+            score += 3000
+            reasons.append("➡️  MOVING TO CENTER: Improving position")
 
     # Avoid edges and corners more aggressively - they reduce options and increase trap risk
     is_edge = (new_head["x"] == 0 or new_head["x"] == board_width - 1 or
