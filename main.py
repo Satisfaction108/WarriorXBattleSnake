@@ -1208,15 +1208,27 @@ def evaluate_move(direction: str, game_state: dict, use_prediction: bool = True)
         reasons.append(f"💀 GUARANTEED TRAP: {trap_analysis['escape_routes']} escapes, {trap_analysis['available_space']} space")
         return {"score": score, "reasons": reasons, "direction": direction}
 
-    # Penalize dangerous situations
+    # Penalize dangerous situations more heavily
     if trap_analysis["is_dangerous"]:
-        score -= 50000
-        reasons.append(f"⚠️  DANGEROUS: {trap_analysis['escape_routes']} escapes, {trap_analysis['available_space']} space")
+        # Scale penalty based on how dangerous it is
+        danger_penalty = 80000 + (3 - trap_analysis['escape_routes']) * 20000
+        score -= danger_penalty
+        reasons.append(f"⚠️  DANGEROUS: {trap_analysis['escape_routes']} escapes, {trap_analysis['available_space']} space (-{danger_penalty})")
 
-    # Reward safe positions
+    # Reward safe positions with multiple escape routes
     if trap_analysis["escape_routes"] >= 3:
+        safety_bonus = 15000
+        score += safety_bonus
+        reasons.append(f"✅ SAFE POSITION: {trap_analysis['escape_routes']} escape routes (+{safety_bonus})")
+    elif trap_analysis["escape_routes"] == 2:
+        # Two escapes is okay but not ideal
+        score += 5000
+        reasons.append(f"✓ ADEQUATE: {trap_analysis['escape_routes']} escape routes")
+    
+    # Extra reward for having lots of available space
+    if trap_analysis["available_space"] >= my_length * 3:
         score += 10000
-        reasons.append(f"✅ SAFE POSITION: {trap_analysis['escape_routes']} escape routes")
+        reasons.append(f"🌊 PLENTY OF SPACE: {trap_analysis['available_space']} cells available")
 
     # ========================================================================
     # PHASE 3: FOOD ACQUISITION - Eat or seek food
@@ -1354,18 +1366,26 @@ def evaluate_move(direction: str, game_state: dict, use_prediction: bool = True)
         score -= 3000
         reasons.append("⚠️  FAR FROM CENTER: Poor positioning")
 
-    # Avoid edges and corners when possible
+    # Avoid edges and corners more aggressively - they reduce options and increase trap risk
     is_edge = (new_head["x"] == 0 or new_head["x"] == board_width - 1 or
                new_head["y"] == 0 or new_head["y"] == board_height - 1)
     is_corner = (new_head["x"] == 0 or new_head["x"] == board_width - 1) and \
                 (new_head["y"] == 0 or new_head["y"] == board_height - 1)
+    
+    # Near edge/corner detection for better avoidance
+    near_edge = (new_head["x"] <= 1 or new_head["x"] >= board_width - 2 or
+                 new_head["y"] <= 1 or new_head["y"] >= board_height - 2)
 
     if is_corner:
-        score -= 15000
-        reasons.append("⚠️  CORNER: Very limited options")
+        score -= 30000  # Increased penalty - corners are very dangerous
+        reasons.append("⚠️  CORNER: Very limited options, high trap risk!")
     elif is_edge:
+        score -= 12000  # Increased penalty - edges restrict movement
+        reasons.append("⚠️  EDGE: Limited options, avoid when possible")
+    elif near_edge and my_length > 5:
+        # When we're bigger, be more careful near edges
         score -= 5000
-        reasons.append("⚠️  EDGE: Limited options")
+        reasons.append("⚠️  NEAR EDGE: Getting close to boundary")
 
     # ========================================================================
     # PHASE 6: OPPONENT INTERACTION
