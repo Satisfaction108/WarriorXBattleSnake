@@ -1086,14 +1086,21 @@ def move(game_state: typing.Dict) -> typing.Dict:
     Uses minimax search with 20-move lookahead.
     """
     # Get all possible moves (using helper function for consistency)
-    possible_moves = get_possible_moves(game_state["you"],
-                                       game_state["board"]["width"],
-                                       game_state["board"]["height"])
+    my_head = game_state["you"]["body"][0]
+    board_width = game_state["board"]["width"]
+    board_height = game_state["board"]["height"]
+
+    print(f"\n📍 Current Position: ({my_head['x']}, {my_head['y']}) on {board_width}x{board_height} board")
+    print(f"   Walls at: x={board_width}, y={board_height}")
+
+    possible_moves = get_possible_moves(game_state["you"], board_width, board_height)
+
+    print(f"   Possible moves (wall-filtered): {possible_moves}")
 
     if not possible_moves:
         # No valid moves - try anything as last resort
         possible_moves = ["up", "down", "left", "right"]
-        print("WARNING: No valid moves found! Trying all directions.")
+        print("⚠️  WARNING: No valid moves found! Trying all directions as last resort.")
 
     # Evaluate all possible moves with prediction
     move_evaluations = []
@@ -1175,8 +1182,11 @@ def move(game_state: typing.Dict) -> typing.Dict:
     chosen_direction = best_move["direction"]
     my_head = game_state["you"]["body"][0]
     my_length = len(game_state["you"]["body"])
-    board_width = game_state["board"]["width"]
-    board_height = game_state["board"]["height"]
+    final_board_width = game_state["board"]["width"]
+    final_board_height = game_state["board"]["height"]
+
+    print(f"\n🎯 FINAL DECISION: {chosen_direction.upper()}")
+    print(f"   From: ({my_head['x']}, {my_head['y']})")
 
     final_head = {"x": my_head["x"], "y": my_head["y"]}
     if chosen_direction == "up":
@@ -1188,11 +1198,14 @@ def move(game_state: typing.Dict) -> typing.Dict:
     elif chosen_direction == "right":
         final_head["x"] += 1
 
+    print(f"   To: ({final_head['x']}, {final_head['y']})")
+
     # Check if this would go out of bounds - CRITICAL SAFETY CHECK
-    if final_head["x"] < 0 or final_head["x"] >= board_width or final_head["y"] < 0 or final_head["y"] >= board_height:
-        print(f"🚨 CRITICAL BUG: Chosen move {chosen_direction.upper()} would go OUT OF BOUNDS!")
+    if final_head["x"] < 0 or final_head["x"] >= final_board_width or final_head["y"] < 0 or final_head["y"] >= final_board_height:
+        print(f"🚨🚨🚨 CRITICAL BUG: Chosen move {chosen_direction.upper()} would go OUT OF BOUNDS!")
         print(f"   Head: ({my_head['x']}, {my_head['y']}) -> ({final_head['x']}, {final_head['y']})")
-        print(f"   Board: {board_width}x{board_height}")
+        print(f"   Board: {final_board_width}x{final_board_height}")
+        print(f"   THIS SHOULD NEVER HAPPEN!")
 
     # Double-check this move is actually safe
     if not is_safe_move(final_head, game_state, my_length):
@@ -1220,6 +1233,11 @@ def move(game_state: typing.Dict) -> typing.Dict:
 
         if not safe_found:
             print(f"   💀 NO SAFE MOVES FOUND! Will die this turn.")
+    else:
+        print(f"   ✅ Move is safe!")
+
+    print(f"\n>>> FINAL MOVE: {chosen_direction.upper()} <<<\n")
+    print("=" * 60)
 
     # Safety check
     if best_move["score"] < -1000:
