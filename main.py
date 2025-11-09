@@ -981,6 +981,152 @@ def minimax_alpha_beta(game_state: dict, my_id: str, depth: int, alpha: float, b
         return minimax_alpha_beta(game_state, my_id, depth - 1, alpha, beta, True, my_move)
 
 
+def comprehensive_trap_detection(position: dict, game_state: dict, depth: int = 4) -> dict:
+    """
+    COMPREHENSIVE trap detection using multiple algorithms.
+    Returns detailed trap analysis.
+    """
+    my_length = len(game_state["you"]["body"])
+    board_width = game_state["board"]["width"]
+    board_height = game_state["board"]["height"]
+
+    # Algorithm 1: Flood fill space analysis
+    obstacles = get_all_obstacles(game_state, include_tail=False)
+    available_space = flood_fill(position, board_width, board_height, obstacles)
+
+    # Algorithm 2: Escape route counting
+    escape_routes = 0
+    for test_dir in ["up", "down", "left", "right"]:
+        test_pos = {"x": position["x"], "y": position["y"]}
+        if test_dir == "up":
+            test_pos["y"] += 1
+        elif test_dir == "down":
+            test_pos["y"] -= 1
+        elif test_dir == "left":
+            test_pos["x"] -= 1
+        elif test_dir == "right":
+            test_pos["x"] += 1
+
+        if is_safe_move(test_pos, game_state, my_length):
+            escape_routes += 1
+
+    # Algorithm 3: Recursive dead-end detection
+    is_dead_end, trap_depth, min_escapes = detect_dead_end(position, game_state, max_depth=depth)
+
+    # Algorithm 4: Corridor detection
+    is_corridor = False
+    corridor_length = 0
+    if escape_routes <= 2:
+        # Check if we're in a narrow corridor
+        for test_dir in ["up", "down", "left", "right"]:
+            test_pos = {"x": position["x"], "y": position["y"]}
+            if test_dir == "up":
+                test_pos["y"] += 1
+            elif test_dir == "down":
+                test_pos["y"] -= 1
+            elif test_dir == "left":
+                test_pos["x"] -= 1
+            elif test_dir == "right":
+                test_pos["x"] += 1
+
+            if is_safe_move(test_pos, game_state, my_length):
+                # Check if this continues as a corridor
+                next_escapes = 0
+                for next_dir in ["up", "down", "left", "right"]:
+                    next_pos = {"x": test_pos["x"], "y": test_pos["y"]}
+                    if next_dir == "up":
+                        next_pos["y"] += 1
+                    elif next_dir == "down":
+                        next_pos["y"] -= 1
+                    elif next_dir == "left":
+                        next_pos["x"] -= 1
+                    elif next_dir == "right":
+                        next_pos["x"] += 1
+
+                    if is_safe_move(next_pos, game_state, my_length):
+                        next_escapes += 1
+
+                if next_escapes <= 2:
+                    is_corridor = True
+                    corridor_length += 1
+
+    return {
+        "available_space": available_space,
+        "escape_routes": escape_routes,
+        "is_dead_end": is_dead_end,
+        "trap_depth": trap_depth,
+        "min_escapes_ahead": min_escapes,
+        "is_corridor": is_corridor,
+        "corridor_length": corridor_length,
+        "is_trapped": escape_routes == 0 or available_space < my_length,
+        "is_dangerous": escape_routes <= 1 or available_space < my_length * 2 or is_dead_end
+    }
+
+
+def analyze_food_safety(food: dict, game_state: dict) -> dict:
+    """
+    COMPREHENSIVE food safety analysis.
+    Checks if eating this food is safe.
+    """
+    my_snake = game_state["you"]
+    my_length = len(my_snake["body"])
+    board_width = game_state["board"]["width"]
+    board_height = game_state["board"]["height"]
+
+    # Check 1: Space after eating
+    obstacles = get_all_obstacles(game_state, include_tail=False)
+    space_after_eating = flood_fill(food, board_width, board_height, obstacles)
+
+    # Check 2: Escape routes from food
+    escape_routes = 0
+    for test_dir in ["up", "down", "left", "right"]:
+        test_pos = {"x": food["x"], "y": food["y"]}
+        if test_dir == "up":
+            test_pos["y"] += 1
+        elif test_dir == "down":
+            test_pos["y"] -= 1
+        elif test_dir == "left":
+            test_pos["x"] -= 1
+        elif test_dir == "right":
+            test_pos["x"] += 1
+
+        if is_safe_move(test_pos, game_state, my_length):
+            escape_routes += 1
+
+    # Check 3: Opponent competition
+    opponents_nearby = 0
+    larger_opponents_nearby = 0
+    for snake in game_state["board"]["snakes"]:
+        if snake["id"] == my_snake["id"]:
+            continue
+
+        snake_head = snake["body"][0]
+        dist = manhattan_distance(snake_head, food)
+
+        if dist <= 3:
+            opponents_nearby += 1
+            if len(snake["body"]) >= my_length:
+                larger_opponents_nearby += 1
+
+    # Check 4: Is food in a corner or against wall?
+    is_corner = (food["x"] == 0 or food["x"] == board_width - 1) and \
+                (food["y"] == 0 or food["y"] == board_height - 1)
+    is_edge = food["x"] == 0 or food["x"] == board_width - 1 or \
+              food["y"] == 0 or food["y"] == board_height - 1
+
+    return {
+        "space_after": space_after_eating,
+        "escape_routes": escape_routes,
+        "opponents_nearby": opponents_nearby,
+        "larger_opponents_nearby": larger_opponents_nearby,
+        "is_corner": is_corner,
+        "is_edge": is_edge,
+        "is_safe": escape_routes >= 2 and space_after_eating >= my_length * 2 and larger_opponents_nearby == 0,
+        "is_risky": escape_routes == 1 or space_after_eating < my_length * 2 or larger_opponents_nearby > 0,
+        "is_deadly": escape_routes == 0 or space_after_eating < my_length or larger_opponents_nearby >= 2
+    }
+
+
 def evaluate_move(direction: str, game_state: dict, use_prediction: bool = True) -> dict:
     """
     Evaluate a move direction with deep prediction.
@@ -1005,498 +1151,304 @@ def evaluate_move(direction: str, game_state: dict, use_prediction: bool = True)
     elif direction == "right":
         new_head["x"] += 1
 
-    score = 1000  # Base score
+    score = 0  # Start from 0 for clear scoring
     reasons = []
 
-    # GAME PHASE DETECTION: Early game = GROW ONLY, Late game = SURVIVE
-    is_early_game = my_length < 10  # Early game: focus 100% on growth
+    # ========================================================================
+    # PHASE 1: IMMEDIATE SURVIVAL - Don't die this turn!
+    # ========================================================================
 
-    if is_early_game:
-        reasons.append(f"🌱 EARLY GAME MODE (length {my_length}) - GROWTH PRIORITY!")
+    # Check 1: Wall collision
+    if new_head["x"] < 0 or new_head["x"] >= board_width or new_head["y"] < 0 or new_head["y"] >= board_height:
+        return {"score": -1000000, "reasons": ["💀 WALL COLLISION"], "direction": direction}
 
-    # CRITICAL: Check basic safety
-    if not is_safe_move(new_head, game_state, my_length):
-        # Check specifically what's wrong
-        if new_head["x"] < 0 or new_head["x"] >= board_width or new_head["y"] < 0 or new_head["y"] >= board_height:
-            return {"score": -10000, "reasons": [f"INSTANT DEATH: WALL at ({new_head['x']}, {new_head['y']})"], "direction": direction}
+    # Check 2: Self collision
+    for segment in my_body[:-1]:  # Exclude tail (it moves)
+        if coords_equal(new_head, segment):
+            return {"score": -1000000, "reasons": ["💀 SELF COLLISION"], "direction": direction}
+
+    # Check 3: Other snake body collision
+    for snake in game_state["board"]["snakes"]:
+        if snake["id"] == game_state["you"]["id"]:
+            continue
+        for segment in snake["body"][:-1]:  # Exclude tail
+            if coords_equal(new_head, segment):
+                return {"score": -1000000, "reasons": ["💀 SNAKE BODY COLLISION"], "direction": direction}
+
+    # Check 4: Head-to-head collision danger
+    head_to_head_danger = False
+    head_to_head_with_equal = False
+    for snake in game_state["board"]["snakes"]:
+        if snake["id"] == game_state["you"]["id"]:
+            continue
+
+        snake_head = snake["body"][0]
+        snake_length = len(snake["body"])
+
+        # Check if opponent could move to same position
+        if manhattan_distance(new_head, snake_head) == 1:
+            if snake_length >= my_length:
+                head_to_head_danger = True
+                if snake_length == my_length:
+                    head_to_head_with_equal = True
+
+    # Passed immediate survival checks
+    score += 100000
+    reasons.append("✅ IMMEDIATE SURVIVAL: Safe from instant death")
+
+    # ========================================================================
+    # PHASE 2: COMPREHENSIVE TRAP ANALYSIS
+    # ========================================================================
+
+    trap_analysis = comprehensive_trap_detection(new_head, game_state, depth=4)
+
+    # CRITICAL: If this move leads to guaranteed trap, reject it!
+    if trap_analysis["is_trapped"]:
+        score -= 500000
+        reasons.append(f"💀 GUARANTEED TRAP: {trap_analysis['escape_routes']} escapes, {trap_analysis['available_space']} space")
+        return {"score": score, "reasons": reasons, "direction": direction}
+
+    # Penalize dangerous situations
+    if trap_analysis["is_dangerous"]:
+        score -= 50000
+        reasons.append(f"⚠️  DANGEROUS: {trap_analysis['escape_routes']} escapes, {trap_analysis['available_space']} space")
+
+    # Reward safe positions
+    if trap_analysis["escape_routes"] >= 3:
+        score += 10000
+        reasons.append(f"✅ SAFE POSITION: {trap_analysis['escape_routes']} escape routes")
+
+    # ========================================================================
+    # PHASE 3: FOOD ACQUISITION - Eat or seek food
+    # ========================================================================
+
+    # Determine health urgency
+    if my_health < 15:
+        urgency = 10  # CRITICAL
+    elif my_health < 30:
+        urgency = 8   # VERY HIGH
+    elif my_health < 50:
+        urgency = 6   # HIGH
+    elif my_health < 70:
+        urgency = 5   # MEDIUM
+    elif my_health < 90:
+        urgency = 4   # LOW
+    else:
+        urgency = 3   # MINIMAL
+
+    # Check if we're eating food THIS turn
+    eating_food = False
+    if food_list:
+        for food in food_list:
+            if coords_equal(new_head, food):
+                eating_food = True
+
+                # Analyze if eating this food is safe
+                food_safety = analyze_food_safety(food, game_state)
+
+                if food_safety["is_deadly"]:
+                    # Food is in a death trap!
+                    score -= 200000
+                    reasons.append(f"💀 DEADLY FOOD: {food_safety['escape_routes']} escapes after eating")
+                elif food_safety["is_risky"]:
+                    # Food is risky but might be worth it if desperate
+                    if urgency >= 8:
+                        # Desperate - take the risk!
+                        score += 200000
+                        reasons.append(f"🍎 DESPERATE EAT: Health {my_health}, risky but necessary!")
+                    else:
+                        # Not desperate - avoid risky food
+                        score -= 50000
+                        reasons.append(f"⚠️  RISKY FOOD: {food_safety['escape_routes']} escapes, avoiding")
+                else:
+                    # Food is safe - EAT IT!
+                    food_bonus = 300000 + (urgency * 20000)
+                    score += food_bonus
+                    reasons.append(f"🍎🍎🍎 SAFE FOOD! Health:{my_health}, Urgency:{urgency} (+{food_bonus})")
+                break
+
+    # If not eating, check if we should seek food
+    if not eating_food and food_list:
+        # Find nearest safe food
+        best_food = None
+        best_food_score = float('-inf')
+
+        obstacles_with_tail = get_all_obstacles(game_state, include_tail=True)
+
+        for food in food_list:
+            # Check food safety
+            food_safety = analyze_food_safety(food, game_state)
+
+            # Skip deadly food
+            if food_safety["is_deadly"]:
+                continue
+
+            # Find path to food
+            path = bfs_path(new_head, food, board_width, board_height, obstacles_with_tail)
+
+            if path:
+                # Calculate food value
+                distance = len(path)
+                safety_bonus = 1000 if food_safety["is_safe"] else 0
+                urgency_bonus = urgency * 500
+                proximity_bonus = max(0, 100 - distance * 10)
+
+                food_score = safety_bonus + urgency_bonus + proximity_bonus
+
+                if food_score > best_food_score:
+                    best_food_score = food_score
+                    best_food = (food, path, food_safety)
+
+        if best_food:
+            food, path, food_safety = best_food
+
+            # Check if this move is on the path to food
+            if len(path) > 0 and coords_equal(new_head, path[0]):
+                # We're moving toward food!
+                path_bonus = 100000 + (urgency * 10000) + best_food_score
+                score += path_bonus
+                reasons.append(f"🍎 SEEKING FOOD: {len(path)} moves away (+{path_bonus})")
+            else:
+                # Not on optimal path, but give bonus for getting closer
+                current_dist = manhattan_distance(my_head, food)
+                new_dist = manhattan_distance(new_head, food)
+                if new_dist < current_dist:
+                    score += 50000 + (urgency * 5000)
+                    reasons.append(f"🍎 MOVING TOWARD FOOD: {new_dist} away")
+
+    # CRITICAL: If health is critical and we're not eating/seeking, HUGE penalty
+    if urgency >= 8 and not eating_food:
+        score -= 100000
+        reasons.append(f"💀 CRITICAL HEALTH: {my_health} HP, need food urgently!")
+
+    # ========================================================================
+    # PHASE 4: HEAD-TO-HEAD COLLISION HANDLING
+    # ========================================================================
+
+    if head_to_head_danger:
+        if head_to_head_with_equal:
+            # Equal size - both die, avoid unless it's our only option
+            score -= 80000
+            reasons.append("⚠️  HEAD-TO-HEAD WITH EQUAL: Mutual destruction risk")
         else:
-            return {"score": -10000, "reasons": ["INSTANT DEATH: Body collision"], "direction": direction}
+            # Larger opponent - we die, they live. AVOID!
+            score -= 200000
+            reasons.append("💀 HEAD-TO-HEAD WITH LARGER: We die!")
 
-    # PREDICTIVE SIMULATION: Use minimax with alpha-beta pruning
-    # DISABLE in early game - it makes the snake too conservative!
-    if use_prediction and not is_early_game:
-        # Adaptive depth: deeper search in critical situations
+    # ========================================================================
+    # PHASE 5: POSITIONING & TERRITORY CONTROL
+    # ========================================================================
+
+    # Center control - being in center gives more options
+    center_x = board_width // 2
+    center_y = board_height // 2
+    center = {"x": center_x, "y": center_y}
+    dist_to_center = manhattan_distance(new_head, center)
+
+    # Reward being reasonably close to center (not too aggressive)
+    if dist_to_center <= 3:
+        score += 5000
+        reasons.append("🎯 NEAR CENTER: Good positioning")
+    elif dist_to_center > board_width // 2 + 1:
+        score -= 3000
+        reasons.append("⚠️  FAR FROM CENTER: Poor positioning")
+
+    # Avoid edges and corners when possible
+    is_edge = (new_head["x"] == 0 or new_head["x"] == board_width - 1 or
+               new_head["y"] == 0 or new_head["y"] == board_height - 1)
+    is_corner = (new_head["x"] == 0 or new_head["x"] == board_width - 1) and \
+                (new_head["y"] == 0 or new_head["y"] == board_height - 1)
+
+    if is_corner:
+        score -= 15000
+        reasons.append("⚠️  CORNER: Very limited options")
+    elif is_edge:
+        score -= 5000
+        reasons.append("⚠️  EDGE: Limited options")
+
+    # ========================================================================
+    # PHASE 6: OPPONENT INTERACTION
+    # ========================================================================
+
+    # Check for smaller snakes we can dominate
+    for snake in game_state["board"]["snakes"]:
+        if snake["id"] == game_state["you"]["id"]:
+            continue
+
+        snake_head = snake["body"][0]
+        snake_length = len(snake["body"])
+        dist_to_opponent = manhattan_distance(new_head, snake_head)
+
+        if snake_length < my_length:
+            # We're bigger - we can be aggressive
+            if dist_to_opponent == 1:
+                # Adjacent to smaller snake - we win head-to-head!
+                score += 20000
+                reasons.append(f"⚔️  DOMINATE: Adjacent to smaller snake (len {snake_length})")
+            elif dist_to_opponent <= 3:
+                # Near smaller snake - good positioning
+                score += 5000
+                reasons.append(f"⚔️  HUNTING: Near smaller snake")
+        elif snake_length >= my_length:
+            # Equal or larger - be cautious
+            if dist_to_opponent <= 2:
+                # Too close to dangerous snake
+                score -= 10000
+                reasons.append(f"⚠️  DANGER: Too close to larger/equal snake (len {snake_length})")
+
+    # ========================================================================
+    # PHASE 7: SPACE CONTROL & VORONOI
+    # ========================================================================
+
+    # Calculate Voronoi space control
+    voronoi_score = calculate_voronoi_space(new_head, game_state)
+    if voronoi_score > 0:
+        score += min(voronoi_score * 100, 10000)
+        reasons.append(f"🗺️  TERRITORY: Controlling {voronoi_score} cells")
+
+    # ========================================================================
+    # PHASE 8: PREDICTIVE SIMULATION (Late game only)
+    # ========================================================================
+
+    if use_prediction and my_length >= 10 and my_health > 30:
         num_opponents = len([s for s in game_state["board"]["snakes"] if s["id"] != game_state["you"]["id"]])
 
-        if my_health < 20 or num_opponents == 1:
-            prediction_depth = 10  # Deeper search when critical or 1v1 (was 8)
+        if num_opponents == 1:
+            prediction_depth = 8
         elif num_opponents <= 2:
-            prediction_depth = 9   # Medium depth for few opponents (was 7)
+            prediction_depth = 6
         else:
-            prediction_depth = 8   # Standard depth for many opponents (was 6)
+            prediction_depth = 4
 
-        # Simulate this move first with smart opponent prediction
+        # Simulate opponent moves
         opponent_moves = {}
         for snake in game_state["board"]["snakes"]:
             if snake["id"] == game_state["you"]["id"]:
                 continue
             snake_moves = get_possible_moves(snake, board_width, board_height)
             if snake_moves:
-                # Predict opponent's most likely move (toward food or toward us)
-                best_opp_move = snake_moves[0]
-                if food_list and snake["health"] < 70:
-                    # Opponent likely going for food
-                    nearest_food = min(food_list, key=lambda f: manhattan_distance(snake["body"][0], f))
-                    best_dist = float('inf')
-                    for move in snake_moves:
-                        test_pos = {"x": snake["body"][0]["x"], "y": snake["body"][0]["y"]}
-                        if move == "up":
-                            test_pos["y"] += 1
-                        elif move == "down":
-                            test_pos["y"] -= 1
-                        elif move == "left":
-                            test_pos["x"] -= 1
-                        elif move == "right":
-                            test_pos["x"] += 1
-                        dist = manhattan_distance(test_pos, nearest_food)
-                        if dist < best_dist:
-                            best_dist = dist
-                            best_opp_move = move
-                opponent_moves[snake["id"]] = best_opp_move
+                opponent_moves[snake["id"]] = snake_moves[0]
 
         test_state = simulate_game_state(game_state, direction, opponent_moves)
 
         if test_state["you"] is None:
-            # We die immediately
-            score -= 15000
-            reasons.append(f"💀💀💀 IMMEDIATE DEATH! (-15000)")
+            score -= 50000
+            reasons.append("💀 MINIMAX: Immediate death predicted")
         else:
-            # Run minimax from this position
             future_score, _ = minimax_alpha_beta(test_state, game_state["you"]["id"],
                                                 prediction_depth, float('-inf'), float('inf'), True, direction)
 
             if future_score < -500000:
-                score -= 15000
-                reasons.append(f"💀💀💀 MINIMAX: DEATH predicted! (-15000)")
+                score -= 30000
+                reasons.append(f"⚠️  MINIMAX: Danger ahead (depth {prediction_depth})")
             else:
-                prediction_bonus = min(int(future_score // 10), 3000)
+                prediction_bonus = min(int(future_score // 20), 5000)
                 score += prediction_bonus
-                reasons.append(f"✓ MINIMAX(d={prediction_depth}): Score {int(future_score)} (+{prediction_bonus})")
+                reasons.append(f"✓ MINIMAX: Future looks good (+{prediction_bonus})")
 
-    # Get obstacles for flood fill (excluding tails)
-    obstacles = get_all_obstacles(game_state, include_tail=False)
-
-    # IMMEDIATE SPACE: Evaluate available space - BE VERY CONSERVATIVE!
-    available_space = flood_fill(new_head, board_width, board_height, obstacles)
-
-    # Need MORE space than just our length to be safe
-    safe_space_needed = my_length * 3  # Conservative: need 3x our length
-
-    if is_early_game:
-        # EARLY GAME: Don't worry about space, just get food!
-        if available_space < my_length // 2:
-            # Only penalize if EXTREMELY tight
-            score -= 2000
-            reasons.append(f"⚠️  VERY TIGHT: {available_space} spaces")
-        else:
-            # Any reasonable space is fine
-            score += min(available_space * 5, 500)
-            reasons.append(f"✓ SPACE: {available_space} cells")
-    else:
-        # LATE GAME: Be more careful about space
-        if available_space < my_length:
-            # DEATH TRAP - not enough space to even fit!
-            score -= 8000
-            reasons.append(f"🚫 DEATH TRAP: Only {available_space} spaces (need {my_length})")
-        elif available_space < my_length * 2:
-            # Very tight - dangerous!
-            score -= 4000
-            reasons.append(f"⚠️  VERY TIGHT: {available_space} spaces (risky!)")
-        elif available_space < safe_space_needed:
-            # Somewhat tight - be careful
-            score -= 1500
-            reasons.append(f"⚠️  TIGHT: {available_space} spaces (need {safe_space_needed})")
-        else:
-            # Good space - reward it more
-            score += min(available_space * 8, 800)
-            reasons.append(f"✓ SPACE: {available_space} cells")
-
-    # CORRIDOR DETECTION: Only in late game!
-    if not is_early_game:
-        # Late game: Penalize entering narrow corridors
-        x, y = new_head["x"], new_head["y"]
-
-        # Check horizontal corridor (walls/obstacles above and below)
-        above_blocked = (y + 1 >= board_height or
-                         (x, y + 1) in obstacles or
-                         not is_safe_move({"x": x, "y": y + 1}, game_state, my_length))
-        below_blocked = (y - 1 < 0 or
-                         (x, y - 1) in obstacles or
-                         not is_safe_move({"x": x, "y": y - 1}, game_state, my_length))
-
-        # Check vertical corridor (walls/obstacles left and right)
-        left_blocked = (x - 1 < 0 or
-                        (x - 1, y) in obstacles or
-                        not is_safe_move({"x": x - 1, "y": y}, game_state, my_length))
-        right_blocked = (x + 1 >= board_width or
-                         (x + 1, y) in obstacles or
-                         not is_safe_move({"x": x + 1, "y": y}, game_state, my_length))
-
-        in_horizontal_corridor = above_blocked and below_blocked
-        in_vertical_corridor = left_blocked and right_blocked
-
-        if in_horizontal_corridor or in_vertical_corridor:
-            # We're in a 1-wide corridor - risky but sometimes necessary for food
-            penalty = 1500
-            score -= penalty
-            corridor_type = "horizontal" if in_horizontal_corridor else "vertical"
-            reasons.append(f"⚠️  CORRIDOR: Entering {corridor_type} 1-wide corridor (-{penalty})")
-    # Early game: Skip corridor detection!
-
-    # FUTURE MOBILITY: Check if we'll have escape routes after this move
-    future_safe_moves = 0
-    for future_dir in ["up", "down", "left", "right"]:
-        # Calculate future position
-        future_pos = {"x": new_head["x"], "y": new_head["y"]}
-        if future_dir == "up":
-            future_pos["y"] += 1
-        elif future_dir == "down":
-            future_pos["y"] -= 1
-        elif future_dir == "left":
-            future_pos["x"] -= 1
-        elif future_dir == "right":
-            future_pos["x"] += 1
-
-        if is_safe_move(future_pos, game_state, my_length):
-            future_safe_moves += 1
-
-    if is_early_game:
-        # EARLY GAME: Only penalize if NO escapes at all
-        # BUT make the penalty HUGE to override food bonuses!
-        if future_safe_moves == 0:
-            score -= 150000  # MASSIVE penalty - even bigger than food bonus!
-            reasons.append(f"💀 DEATH TRAP: No escape routes! (-150000)")
-        elif future_safe_moves == 1:
-            # 1 escape is risky but acceptable for food
-            score -= 2000
-            reasons.append(f"⚠️  RISKY: Only 1 escape route (-2000)")
-        else:
-            score += future_safe_moves * 100
-            reasons.append(f"✓ SAFE: {future_safe_moves} escape routes (+{future_safe_moves * 100})")
-    else:
-        # LATE GAME: Heavily penalize limited escape routes
-        if future_safe_moves == 0:
-            score -= 10000
-            reasons.append(f"🚫 TRAP: No escape routes! (-10000)")
-        elif future_safe_moves == 1:
-            score -= 4000
-            reasons.append(f"⚠️  RISKY: Only 1 escape route (-4000)")
-        elif future_safe_moves == 2:
-            score -= 1000
-            reasons.append(f"⚠️  Limited: 2 escape routes (-1000)")
-        else:
-            score += 500
-            reasons.append(f"✓ SAFE: {future_safe_moves} escape routes (+500)")
-
-    # DEAD END DETECTION: Only in late game!
-    if not is_early_game:
-        # Late game: Check if this move leads to a dead end
-        is_dead_end, depth_to_trap, min_escapes = detect_dead_end(new_head, game_state, max_depth=3)
-
-        if is_dead_end and min_escapes == 0:
-            # This path leads to CERTAIN death (0 escape routes)!
-            penalty = 10000
-            score -= penalty
-            reasons.append(f"💀 DEAD END: Trap in {depth_to_trap} moves! (-{penalty})")
-        elif min_escapes == 1 and depth_to_trap <= 1:
-            # This path leads to a very tight situation IMMEDIATELY
-            penalty = 3000
-            score -= penalty
-            reasons.append(f"⚠️  TIGHT PATH: Only 1 escape next move (-{penalty})")
-    # Early game: Skip dead end detection entirely!
-
-    # EDGE AWARENESS: Avoid getting trapped against walls, especially when opponents are nearby
-    distance_to_left_wall = new_head["x"]
-    distance_to_right_wall = board_width - 1 - new_head["x"]
-    distance_to_bottom_wall = new_head["y"]
-    distance_to_top_wall = board_height - 1 - new_head["y"]
-
-    min_distance_to_wall = min(distance_to_left_wall, distance_to_right_wall,
-                                distance_to_bottom_wall, distance_to_top_wall)
-
-    # Check if any opponents are nearby (within 5 spaces)
-    opponents_nearby = False
-    closest_opponent_distance = float('inf')
-    for snake in game_state["board"]["snakes"]:
-        if snake["id"] != game_state["you"]["id"]:
-            opponent_head = snake["body"][0]
-            dist = manhattan_distance(new_head, opponent_head)
-            closest_opponent_distance = min(closest_opponent_distance, dist)
-            if dist <= 5:
-                opponents_nearby = True
-                break
-
-    # Penalize being near walls when opponents are nearby
-    if opponents_nearby:
-        if min_distance_to_wall == 0:
-            # Right against the wall with opponents nearby = VERY DANGEROUS
-            score -= 3000
-            reasons.append(f"🚫 WALL TRAP: Against wall with opponents nearby! (-3000)")
-        elif min_distance_to_wall == 1:
-            # One space from wall with opponents nearby = dangerous
-            score -= 1500
-            reasons.append(f"⚠️  WALL DANGER: 1 space from wall, opponents close (-1500)")
-        elif min_distance_to_wall == 2:
-            # Two spaces from wall with opponents nearby = risky
-            score -= 800
-            reasons.append(f"⚠️  Near wall with opponents close (-800)")
-
-    # Check for corner positions (even more dangerous)
-    in_corner = (distance_to_left_wall <= 1 and distance_to_bottom_wall <= 1) or \
-                (distance_to_left_wall <= 1 and distance_to_top_wall <= 1) or \
-                (distance_to_right_wall <= 1 and distance_to_bottom_wall <= 1) or \
-                (distance_to_right_wall <= 1 and distance_to_top_wall <= 1)
-
-    if in_corner:
-        if opponents_nearby:
-            score -= 4000
-            reasons.append(f"🚫🚫 CORNER TRAP: In corner with opponents! (-4000)")
-        else:
-            score -= 1000
-            reasons.append(f"⚠️  In corner (-1000)")
-
-    # ADVANCED OPPONENT ANALYSIS: Threat mapping and pursuit
-    threat_tiles, pursue_tiles = get_opponent_threat_tiles(game_state, my_length)
-    new_head_tuple = (new_head["x"], new_head["y"])
-
-    # Check if we're moving into a threat tile (dangerous head-to-head zone)
-    if new_head_tuple in threat_tiles:
-        if is_early_game:
-            # Early game: Smaller penalty - we need to take risks to get food
-            penalty = 3000
-            score -= penalty
-            reasons.append(f"⚠️  THREAT ZONE: Opponent nearby (-{penalty})")
-        else:
-            # Late game: Big penalty - avoid head-to-head with equal/larger
-            score -= 8000
-            reasons.append(f"🚫 THREAT ZONE: Opponent head-to-head danger! (-8000)")
-
-    # Check if we're moving into a pursue tile (we can dominate smaller snake)
-    if new_head_tuple in pursue_tiles:
-        score += 3000  # Increased from 2000 - be more aggressive when we're bigger
-        reasons.append(f"⚔️  DOMINATE: Head-to-head with smaller snake! (+3000)")
-
-    # OPPONENT PROXIMITY: Avoid getting boxed in by other snakes
-    for snake in game_state["board"]["snakes"]:
-        if snake["id"] == game_state["you"]["id"]:
-            continue
-
-        opponent_head = snake["body"][0]
-        opponent_length = len(snake["body"])
-        distance_to_opponent = manhattan_distance(new_head, opponent_head)
-
-        # SIZE DOMINANCE: Aggressively pursue smaller snakes
-        if opponent_length < my_length:
-            # We're BIGGER - be aggressive!
-            if distance_to_opponent <= 3:
-                # Close to smaller snake - chase them down!
-                chase_bonus = (4 - distance_to_opponent) * 300
-                score += chase_bonus
-                reasons.append(f"⚔️  CHASE SMALLER: Distance {distance_to_opponent} (+{chase_bonus})")
-            
-            # Bonus for cutting them off from food
-            if food_list:
-                for food in food_list:
-                    opp_food_dist = manhattan_distance(opponent_head, food)
-                    our_food_dist = manhattan_distance(new_head, food)
-                    if our_food_dist < opp_food_dist:
-                        score += 250
-                        reasons.append(f"⚔️  DENY FOOD to smaller snake (+250)")
-                        break
-
-        # Penalize being too close to larger/equal snakes - INCREASED PENALTIES
-        elif opponent_length >= my_length:
-            if distance_to_opponent == 1:
-                penalty = 5000  # Increased from 2000 - extremely dangerous
-                score -= penalty
-                reasons.append(f"🚫 VERY CLOSE to larger/equal snake! (-{penalty})")
-            elif distance_to_opponent == 2:
-                penalty = 2500  # Increased from 1000
-                score -= penalty
-                reasons.append(f"⚠️  CLOSE to larger/equal snake! (-{penalty})")
-            elif distance_to_opponent <= 3:
-                penalty = 1000  # Increased from 400
-                score -= penalty
-                reasons.append(f"⚠️  Near larger/equal snake (-{penalty})")
-
-        # Check if we're moving adjacent to opponent body segments
-        for segment in snake["body"][:5]:  # Check first 5 segments
-            if manhattan_distance(new_head, segment) == 1:
-                if opponent_length < my_length:
-                    # Adjacent to smaller snake body - less dangerous
-                    score -= 500
-                    reasons.append(f"⚠️  Adjacent to smaller opponent body (-500)")
-                else:
-                    score -= 2000
-                    reasons.append(f"🚫 DANGER: Adjacent to larger opponent body! (-2000)")
-                break
-
-    # FOOD SEEKING: Advanced prioritization with opportunistic eating
-    should_seek, best_food, urgency, food_value = prioritize_food(game_state, new_head)
-
-    if food_list:
-        # Check if we're moving ONTO food (this move eats it!)
-        eating_food = False
-        for food in food_list:
-            if coords_equal(new_head, food):
-                eating_food = True
-                break
-
-        if eating_food:
-            # EATING FOOD THIS TURN = MASSIVE BONUS!
-            if is_early_game:
-                # EARLY GAME: Food is EVERYTHING! INSANE bonus to override all penalties
-                food_bonus = 100000 + (urgency * 10000) + max(food_value, 0)
-                score += food_bonus
-                reasons.append(f"🍎🍎🍎 EARLY GAME FOOD! Urgency:{urgency} (+{food_bonus})")
-            else:
-                # Late game: Still important but not as critical
-                food_bonus = 15000 + (urgency * 2000) + max(food_value, 0)
-                score += food_bonus
-                reasons.append(f"🍎🍎🍎 EATING FOOD! Urgency:{urgency} Value:{food_value} (+{food_bonus})")
-        elif should_seek and best_food:
-            # Seeking food based on advanced prioritization
-            obstacles_with_tail = get_all_obstacles(game_state, include_tail=True)
-            path_to_food = bfs_path(new_head, best_food, board_width, board_height, obstacles_with_tail)
-
-            if path_to_food:
-                # VALIDATE PATH SAFETY: Only in late game with good health
-                if is_early_game:
-                    # EARLY GAME: NO VALIDATION! Just go for food! MASSIVE BONUS!
-                    path_bonus = max(food_value // 2, urgency * 5000)  # INSANE bonus
-                    score += path_bonus
-                    reasons.append(f"🍎🍎🍎 EARLY GAME SEEK: {len(path_to_food)} moves to food (+{path_bonus})")
-                elif my_health > 70:
-                    # Late game with good health: validate path
-                    is_safe, unsafe_step, reason = validate_path_safety(
-                        path_to_food, new_head, game_state,
-                        min_escape_routes=1,  # Only need 1 escape
-                        min_space=int(my_length * 1.2)  # Very lenient
-                    )
-
-                    if is_safe:
-                        # Path is safe! Big bonus
-                        path_bonus = max(food_value // 2, urgency * 700)
-                        score += path_bonus
-                        reasons.append(f"🍎 FOOD SEEK: {len(path_to_food)} moves, SAFE, value:{food_value} (+{path_bonus})")
-                    else:
-                        # Path exists but is risky - still give bonus, just smaller
-                        path_bonus = max(food_value // 3, urgency * 400)
-                        score += path_bonus
-                        reasons.append(f"🍎 RISKY FOOD SEEK: {len(path_to_food)} moves, value:{food_value} (+{path_bonus})")
-                else:
-                    # Late game, health <= 70: GO FOR FOOD! No validation needed
-                    path_bonus = max(food_value // 2, urgency * 800)
-                    score += path_bonus
-                    reasons.append(f"🍎🍎 AGGRESSIVE FOOD SEEK: {len(path_to_food)} moves, value:{food_value} (+{path_bonus})")
-            else:
-                # No path to prioritized food
-                if not is_early_game:
-                    # Late game: Penalize not having food path
-                    if urgency >= 8:
-                        score -= 5000
-                        reasons.append("💀 CRITICAL: No food path!")
-                    elif urgency >= 4:
-                        score -= 2000
-                        reasons.append("⚠️  URGENT: No food path!")
-                # Early game: Don't penalize - just keep moving!
-                # But give bonus for moving toward ANY food
-                if is_early_game and food_list:
-                    nearest_food = min(food_list, key=lambda f: manhattan_distance(my_head, f))
-                    current_dist = manhattan_distance(my_head, nearest_food)
-                    new_dist = manhattan_distance(new_head, nearest_food)
-                    if new_dist < current_dist:
-                        # Moving toward food even without clear path
-                        score += 2000
-                        reasons.append(f"🍎 EARLY GAME: Moving toward food (+2000)")
-        elif food_value > 200:
-            # High value food exists but we're not seeking it yet
-            # This is for truly opportunistic eating (nearby safe food)
-            score += food_value // 2  # Increased from // 3
-            reasons.append(f"🍎 OPPORTUNISTIC: High-value food nearby (+{food_value // 2})")
-
-    # TAIL CHASING: Safe when healthy and not seeking food urgently
-    # Only follow tail if we have good health and aren't urgently seeking food
-    if my_health > 70 and urgency < 4 and len(my_body) > 3:
-        my_tail = my_body[-1]
-        if manhattan_distance(new_head, my_tail) <= 2:
-            score += 150  # Increased from 100
-            reasons.append("Following tail (safe strategy)")
-
-    # CENTER CONTROL: ALWAYS important, especially in early game!
-    center_x = board_width // 2
-    center_y = board_height // 2
-    center = {"x": center_x, "y": center_y}
-    dist_to_center = manhattan_distance(new_head, center)
-    current_dist_to_center = manhattan_distance(my_head, center)
-
-    # Reward being near center and moving toward it
-    if is_early_game:
-        # EARLY GAME: Center control is CRITICAL for survival
-        # Being in center gives more escape options and prevents getting cornered
-        if dist_to_center <= 2:
-            # Very close to center
-            score += 3000
-            reasons.append("🎯 CENTER CONTROL: At center! (+3000)")
-        elif dist_to_center < current_dist_to_center:
-            # Moving toward center
-            score += 1500
-            reasons.append("🎯 CENTER CONTROL: Moving to center (+1500)")
-        elif dist_to_center > board_width // 2 + 2:
-            # Too far from center - penalize
-            score -= 1000
-            reasons.append("⚠️  TOO FAR from center (-1000)")
-    else:
-        # Late game: Center still important but less critical
-        if dist_to_center < current_dist_to_center:
-            score += 200
-            reasons.append("🎯 Moving to center (+200)")
-
-    # AGGRESSIVE/DEFENSIVE MODE
-    is_aggressive = should_play_aggressive(game_state)
-
-    if is_aggressive:
-
-        # Reward cutting off opponents
-        for snake in game_state["board"]["snakes"]:
-            if snake["id"] == game_state["you"]["id"]:
-                continue
-
-            opp_head = snake["body"][0]
-            # If we're between opponent and food, bonus
-            if food_list:
-                nearest_food = min(food_list, key=lambda f: manhattan_distance(opp_head, f))
-                our_dist_to_food = manhattan_distance(new_head, nearest_food)
-                opp_dist_to_food = manhattan_distance(opp_head, nearest_food)
-
-                if our_dist_to_food < opp_dist_to_food:
-                    score += 150
-                    reasons.append("⚔️  AGGRESSIVE: Cutting off opponent food (+150)")
-                    break
-    else:
-        # Defensive mode: maximize space, avoid opponents
-        score += available_space * 2  # Extra space bonus
-        reasons.append(f"🛡️  DEFENSIVE: Space priority (+{available_space * 2})")
-
-    # CENTER CONTROL: Stay near center to have more options and avoid getting trapped
-    center_x = board_width // 2
-    center_y = board_height // 2
-    distance_from_center = manhattan_distance(new_head, {"x": center_x, "y": center_y})
-    # Increased from *2 to *5 - center control is important for avoiding traps
-    center_bonus = (20 - distance_from_center) * 5
-    score += center_bonus
-    if center_bonus > 50:
-        reasons.append(f"✓ CENTER: Close to center (+{center_bonus})")
+    # ========================================================================
+    # FINAL SCORE RETURN
+    # ========================================================================
 
     return {"score": score, "reasons": reasons, "direction": direction}
 
