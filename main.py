@@ -1008,6 +1008,12 @@ def evaluate_move(direction: str, game_state: dict, use_prediction: bool = True)
     score = 1000  # Base score
     reasons = []
 
+    # GAME PHASE DETECTION: Early game = GROW ONLY, Late game = SURVIVE
+    is_early_game = my_length < 10  # Early game: focus 100% on growth
+
+    if is_early_game:
+        reasons.append(f"🌱 EARLY GAME MODE (length {my_length}) - GROWTH PRIORITY!")
+
     # CRITICAL: Check basic safety
     if not is_safe_move(new_head, game_state, my_length):
         # Check specifically what's wrong
@@ -1085,56 +1091,68 @@ def evaluate_move(direction: str, game_state: dict, use_prediction: bool = True)
     # Need MORE space than just our length to be safe
     safe_space_needed = my_length * 3  # Conservative: need 3x our length
 
-    if available_space < my_length:
-        # DEATH TRAP - not enough space to even fit!
-        score -= 8000  # Increased from 5000
-        reasons.append(f"🚫 DEATH TRAP: Only {available_space} spaces (need {my_length})")
-    elif available_space < my_length * 2:
-        # Very tight - dangerous!
-        score -= 4000  # Increased from 2000
-        reasons.append(f"⚠️  VERY TIGHT: {available_space} spaces (risky!)")
-    elif available_space < safe_space_needed:
-        # Somewhat tight - be careful
-        score -= 1500  # Increased from 800
-        reasons.append(f"⚠️  TIGHT: {available_space} spaces (need {safe_space_needed})")
+    if is_early_game:
+        # EARLY GAME: Don't worry about space, just get food!
+        if available_space < my_length // 2:
+            # Only penalize if EXTREMELY tight
+            score -= 2000
+            reasons.append(f"⚠️  VERY TIGHT: {available_space} spaces")
+        else:
+            # Any reasonable space is fine
+            score += min(available_space * 5, 500)
+            reasons.append(f"✓ SPACE: {available_space} cells")
     else:
-        # Good space - reward it more
-        score += min(available_space * 8, 800)  # Increased from *5, 500
-        reasons.append(f"✓ SPACE: {available_space} cells")
+        # LATE GAME: Be more careful about space
+        if available_space < my_length:
+            # DEATH TRAP - not enough space to even fit!
+            score -= 8000
+            reasons.append(f"🚫 DEATH TRAP: Only {available_space} spaces (need {my_length})")
+        elif available_space < my_length * 2:
+            # Very tight - dangerous!
+            score -= 4000
+            reasons.append(f"⚠️  VERY TIGHT: {available_space} spaces (risky!)")
+        elif available_space < safe_space_needed:
+            # Somewhat tight - be careful
+            score -= 1500
+            reasons.append(f"⚠️  TIGHT: {available_space} spaces (need {safe_space_needed})")
+        else:
+            # Good space - reward it more
+            score += min(available_space * 8, 800)
+            reasons.append(f"✓ SPACE: {available_space} cells")
 
-    # CORRIDOR DETECTION: Penalize entering narrow corridors (but not too harshly)
-    # A corridor is when we have walls/obstacles on both sides
-    # Check if we're entering a 1-wide or 2-wide corridor
-    x, y = new_head["x"], new_head["y"]
+    # CORRIDOR DETECTION: Only in late game!
+    if not is_early_game:
+        # Late game: Penalize entering narrow corridors
+        x, y = new_head["x"], new_head["y"]
 
-    # Check horizontal corridor (walls/obstacles above and below)
-    above_blocked = (y + 1 >= board_height or
-                     (x, y + 1) in obstacles or
-                     not is_safe_move({"x": x, "y": y + 1}, game_state, my_length))
-    below_blocked = (y - 1 < 0 or
-                     (x, y - 1) in obstacles or
-                     not is_safe_move({"x": x, "y": y - 1}, game_state, my_length))
+        # Check horizontal corridor (walls/obstacles above and below)
+        above_blocked = (y + 1 >= board_height or
+                         (x, y + 1) in obstacles or
+                         not is_safe_move({"x": x, "y": y + 1}, game_state, my_length))
+        below_blocked = (y - 1 < 0 or
+                         (x, y - 1) in obstacles or
+                         not is_safe_move({"x": x, "y": y - 1}, game_state, my_length))
 
-    # Check vertical corridor (walls/obstacles left and right)
-    left_blocked = (x - 1 < 0 or
-                    (x - 1, y) in obstacles or
-                    not is_safe_move({"x": x - 1, "y": y}, game_state, my_length))
-    right_blocked = (x + 1 >= board_width or
-                     (x + 1, y) in obstacles or
-                     not is_safe_move({"x": x + 1, "y": y}, game_state, my_length))
+        # Check vertical corridor (walls/obstacles left and right)
+        left_blocked = (x - 1 < 0 or
+                        (x - 1, y) in obstacles or
+                        not is_safe_move({"x": x - 1, "y": y}, game_state, my_length))
+        right_blocked = (x + 1 >= board_width or
+                         (x + 1, y) in obstacles or
+                         not is_safe_move({"x": x + 1, "y": y}, game_state, my_length))
 
-    in_horizontal_corridor = above_blocked and below_blocked
-    in_vertical_corridor = left_blocked and right_blocked
+        in_horizontal_corridor = above_blocked and below_blocked
+        in_vertical_corridor = left_blocked and right_blocked
 
-    if in_horizontal_corridor or in_vertical_corridor:
-        # We're in a 1-wide corridor - risky but sometimes necessary for food
-        penalty = 1500  # Reduced from 5000 - penalize but don't completely block
-        score -= penalty
-        corridor_type = "horizontal" if in_horizontal_corridor else "vertical"
-        reasons.append(f"⚠️  CORRIDOR: Entering {corridor_type} 1-wide corridor (-{penalty})")
+        if in_horizontal_corridor or in_vertical_corridor:
+            # We're in a 1-wide corridor - risky but sometimes necessary for food
+            penalty = 1500
+            score -= penalty
+            corridor_type = "horizontal" if in_horizontal_corridor else "vertical"
+            reasons.append(f"⚠️  CORRIDOR: Entering {corridor_type} 1-wide corridor (-{penalty})")
+    # Early game: Skip corridor detection!
 
     # FUTURE MOBILITY: Check if we'll have escape routes after this move
-    # Count how many safe moves we'll have from the new position
     future_safe_moves = 0
     for future_dir in ["up", "down", "left", "right"]:
         # Calculate future position
@@ -1151,38 +1169,45 @@ def evaluate_move(direction: str, game_state: dict, use_prediction: bool = True)
         if is_safe_move(future_pos, game_state, my_length):
             future_safe_moves += 1
 
-    if future_safe_moves == 0:
-        # NO ESCAPE ROUTES - this is a trap!
-        score -= 10000  # Increased from 6000 - this is almost certain death
-        reasons.append(f"🚫 TRAP: No escape routes! (-10000)")
-    elif future_safe_moves == 1:
-        # Only one escape route - very risky!
-        score -= 4000  # Increased from 2500
-        reasons.append(f"⚠️  RISKY: Only 1 escape route (-4000)")
-    elif future_safe_moves == 2:
-        # Two escape routes - okay but not great
-        score -= 1000  # Increased from 500
-        reasons.append(f"⚠️  Limited: 2 escape routes (-1000)")
+    if is_early_game:
+        # EARLY GAME: Only penalize if NO escapes at all
+        if future_safe_moves == 0:
+            score -= 5000  # Reduced - we need to take risks for food
+            reasons.append(f"⚠️  TRAP: No escape routes! (-5000)")
+        else:
+            score += future_safe_moves * 100
+            reasons.append(f"✓ SAFE: {future_safe_moves} escape routes (+{future_safe_moves * 100})")
     else:
-        # Multiple escape routes - good!
-        score += 500  # Increased from 300
-        reasons.append(f"✓ SAFE: {future_safe_moves} escape routes (+500)")
+        # LATE GAME: Heavily penalize limited escape routes
+        if future_safe_moves == 0:
+            score -= 10000
+            reasons.append(f"🚫 TRAP: No escape routes! (-10000)")
+        elif future_safe_moves == 1:
+            score -= 4000
+            reasons.append(f"⚠️  RISKY: Only 1 escape route (-4000)")
+        elif future_safe_moves == 2:
+            score -= 1000
+            reasons.append(f"⚠️  Limited: 2 escape routes (-1000)")
+        else:
+            score += 500
+            reasons.append(f"✓ SAFE: {future_safe_moves} escape routes (+500)")
 
-    # DEAD END DETECTION: Check if this move leads to a dead end within 3 moves
-    # Only penalize TRUE dead ends (0 escapes), not just tight spaces
-    is_dead_end, depth_to_trap, min_escapes = detect_dead_end(new_head, game_state, max_depth=3)
+    # DEAD END DETECTION: Only in late game!
+    if not is_early_game:
+        # Late game: Check if this move leads to a dead end
+        is_dead_end, depth_to_trap, min_escapes = detect_dead_end(new_head, game_state, max_depth=3)
 
-    if is_dead_end and min_escapes == 0:
-        # This path leads to CERTAIN death (0 escape routes)!
-        penalty = 10000  # Reduced from 12000
-        score -= penalty
-        reasons.append(f"💀 DEAD END: Trap in {depth_to_trap} moves! (-{penalty})")
-    elif min_escapes == 1 and depth_to_trap <= 1:
-        # This path leads to a very tight situation IMMEDIATELY
-        penalty = 3000  # Reduced from 4000, and only if depth <= 1
-        score -= penalty
-        reasons.append(f"⚠️  TIGHT PATH: Only 1 escape next move (-{penalty})")
-    # Removed the third condition - don't penalize having 2 escapes
+        if is_dead_end and min_escapes == 0:
+            # This path leads to CERTAIN death (0 escape routes)!
+            penalty = 10000
+            score -= penalty
+            reasons.append(f"💀 DEAD END: Trap in {depth_to_trap} moves! (-{penalty})")
+        elif min_escapes == 1 and depth_to_trap <= 1:
+            # This path leads to a very tight situation IMMEDIATELY
+            penalty = 3000
+            score -= penalty
+            reasons.append(f"⚠️  TIGHT PATH: Only 1 escape next move (-{penalty})")
+    # Early game: Skip dead end detection entirely!
 
     # EDGE AWARENESS: Avoid getting trapped against walls, especially when opponents are nearby
     distance_to_left_wall = new_head["x"]
@@ -1240,8 +1265,15 @@ def evaluate_move(direction: str, game_state: dict, use_prediction: bool = True)
 
     # Check if we're moving into a threat tile (dangerous head-to-head zone)
     if new_head_tuple in threat_tiles:
-        score -= 8000  # Increased from 4000 - head-to-head with equal/larger is DEATH
-        reasons.append(f"🚫 THREAT ZONE: Opponent head-to-head danger! (-8000)")
+        if is_early_game:
+            # Early game: Smaller penalty - we need to take risks to get food
+            penalty = 3000
+            score -= penalty
+            reasons.append(f"⚠️  THREAT ZONE: Opponent nearby (-{penalty})")
+        else:
+            # Late game: Big penalty - avoid head-to-head with equal/larger
+            score -= 8000
+            reasons.append(f"🚫 THREAT ZONE: Opponent head-to-head danger! (-8000)")
 
     # Check if we're moving into a pursue tile (we can dominate smaller snake)
     if new_head_tuple in pursue_tiles:
@@ -1316,19 +1348,30 @@ def evaluate_move(direction: str, game_state: dict, use_prediction: bool = True)
 
         if eating_food:
             # EATING FOOD THIS TURN = MASSIVE BONUS!
-            # Increased even more to prioritize eating
-            food_bonus = 15000 + (urgency * 2000) + max(food_value, 0)  # Increased from 10000
-            score += food_bonus
-            reasons.append(f"🍎🍎🍎 EATING FOOD! Urgency:{urgency} Value:{food_value} (+{food_bonus})")
+            if is_early_game:
+                # EARLY GAME: Food is EVERYTHING! Massive bonus
+                food_bonus = 50000 + (urgency * 5000) + max(food_value, 0)
+                score += food_bonus
+                reasons.append(f"🍎🍎🍎 EARLY GAME FOOD! Urgency:{urgency} (+{food_bonus})")
+            else:
+                # Late game: Still important but not as critical
+                food_bonus = 15000 + (urgency * 2000) + max(food_value, 0)
+                score += food_bonus
+                reasons.append(f"🍎🍎🍎 EATING FOOD! Urgency:{urgency} Value:{food_value} (+{food_bonus})")
         elif should_seek and best_food:
             # Seeking food based on advanced prioritization
             obstacles_with_tail = get_all_obstacles(game_state, include_tail=True)
             path_to_food = bfs_path(new_head, best_food, board_width, board_height, obstacles_with_tail)
 
             if path_to_food:
-                # VALIDATE PATH SAFETY: Only when we have VERY good health
-                # Most of the time, just go for food!
-                if my_health > 70:
+                # VALIDATE PATH SAFETY: Only in late game with good health
+                if is_early_game:
+                    # EARLY GAME: NO VALIDATION! Just go for food!
+                    path_bonus = max(food_value // 2, urgency * 2000)  # Huge bonus
+                    score += path_bonus
+                    reasons.append(f"🍎🍎🍎 EARLY GAME SEEK: {len(path_to_food)} moves to food (+{path_bonus})")
+                elif my_health > 70:
+                    # Late game with good health: validate path
                     is_safe, unsafe_step, reason = validate_path_safety(
                         path_to_food, new_head, game_state,
                         min_escape_routes=1,  # Only need 1 escape
@@ -1346,7 +1389,7 @@ def evaluate_move(direction: str, game_state: dict, use_prediction: bool = True)
                         score += path_bonus
                         reasons.append(f"🍎 RISKY FOOD SEEK: {len(path_to_food)} moves, value:{food_value} (+{path_bonus})")
                 else:
-                    # Health <= 70: GO FOR FOOD! No validation needed
+                    # Late game, health <= 70: GO FOR FOOD! No validation needed
                     path_bonus = max(food_value // 2, urgency * 800)
                     score += path_bonus
                     reasons.append(f"🍎🍎 AGGRESSIVE FOOD SEEK: {len(path_to_food)} moves, value:{food_value} (+{path_bonus})")
