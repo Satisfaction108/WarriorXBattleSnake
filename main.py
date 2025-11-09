@@ -448,89 +448,98 @@ def predict_opponent_moves(game_state: dict, depth: int = 1) -> list:
         return [likely_moves]
 
 
-def simulate_future(game_state: dict, my_move: str, depth: int = 15, max_depth: int = 15) -> dict:
+def deep_simulation(game_state: dict, my_move: str, depth: int) -> dict:
     """
-    Simulate future game states to evaluate survival probability.
-    Uses 15-move lookahead for comprehensive trap detection.
-    Returns evaluation metrics.
+    Deep forward simulation with smart opponent prediction.
+    For turn i, simulates next 'depth' moves forward.
+    At each turn, we pick our best move and opponents pick their likely moves.
+
+    Returns: {"score": int, "alive": bool, "health": int, "space": int}
     """
-    if depth == 0 or game_state["you"] is None:
-        # Base case
-        if game_state["you"] is None:
-            return {"alive": False, "health": 0, "length": 0, "space": 0}
+    current_state = game_state
+    current_move = my_move
 
-        my_head = game_state["you"]["body"][0]
-        obstacles = get_all_obstacles(game_state, include_tail=False)
-        space = flood_fill(my_head, game_state["board"]["width"],
-                          game_state["board"]["height"], obstacles)
-
-        return {
-            "alive": True,
-            "health": game_state["you"]["health"],
-            "length": len(game_state["you"]["body"]),
-            "space": space
-        }
-
-    # Only predict opponent moves for first few levels to save time
-    if depth == max_depth:
-        opponent_move_scenarios = predict_opponent_moves(game_state, depth)
-    else:
-        # Use simplified prediction for deeper levels
-        opponent_move_scenarios = [{}]
-        for snake in game_state["board"]["snakes"]:
-            if snake["id"] != game_state["you"]["id"]:
-                # Just assume they move toward food or center
-                moves = get_possible_moves(snake, game_state["board"]["width"],
-                                          game_state["board"]["height"])
-                opponent_move_scenarios[0][snake["id"]] = moves[0] if moves else "up"
-
-    best_outcome = None
-
-    for opponent_moves in opponent_move_scenarios[:2]:  # Limit to 2 scenarios max
-        # Simulate this scenario
-        new_state = simulate_game_state(game_state, my_move, opponent_moves)
-
-        if new_state["you"] is None:
+    for _ in range(depth):
+        if current_state["you"] is None:
             # We died
-            outcome = {"alive": False, "health": 0, "length": 0, "space": 0}
-        else:
-            # We survived, continue simulation
-            # For remaining depth, pick best move recursively
-            my_possible_moves = get_possible_moves(new_state["you"],
-                                                   new_state["board"]["width"],
-                                                   new_state["board"]["height"])
+            return {"score": -1000000, "alive": False, "health": 0, "space": 0}
 
-            if not my_possible_moves:
-                outcome = {"alive": False, "health": 0, "length": 0, "space": 0}
-            else:
-                # Only recurse for first 2 moves to save time
-                if depth > max_depth - 3:
-                    # Recursively evaluate best future move
-                    best_future = None
-                    for future_move in my_possible_moves[:2]:  # Limit to 2 best moves
-                        future_outcome = simulate_future(new_state, future_move, depth - 1, max_depth)
-                        if best_future is None or (future_outcome["alive"] and
-                                                  future_outcome["health"] > best_future.get("health", 0)):
-                            best_future = future_outcome
+        # Predict opponent moves (simple heuristic: first safe move)
+        opponent_moves = {}
+        for snake in current_state["board"]["snakes"]:
+            if snake["id"] == current_state["you"]["id"]:
+                continue
 
-                    outcome = best_future if best_future else {"alive": False, "health": 0, "length": 0, "space": 0}
-                else:
-                    # Just evaluate current state without further recursion
-                    my_head = new_state["you"]["body"][0]
-                    obstacles = get_all_obstacles(new_state, include_tail=False)
-                    space = flood_fill(my_head, new_state["board"]["width"],
-                                      new_state["board"]["height"], obstacles)
-                    outcome = {
-                        "alive": True,
-                        "health": new_state["you"]["health"],
-                        "length": len(new_state["you"]["body"]),
-                        "space": space
-                    }
+            snake_moves = get_possible_moves(snake, current_state["board"]["width"],
+                                            current_state["board"]["height"])
+            if snake_moves:
+                opponent_moves[snake["id"]] = snake_moves[0]
 
-        if best_outcome is None or (outcome["alive"] and outcome["health"] > best_outcome.get("health", 0)):
-            best_outcome = outcome
+        # Simulate one turn forward
+        current_state = simulate_game_state(current_state, current_move, opponent_moves)
 
-    return best_outcome if best_outcome else {"alive": False, "health": 0, "length": 0, "space": 0}
+        if current_state["you"] is None:
+            # We died during simulation
+            return {"score": -1000000, "alive": False, "health": 0, "space": 0}
+
+        # For next turn, pick our best move (greedy)
+        my_possible_moves = get_possible_moves(current_state["you"],
+                                               current_state["board"]["width"],
+                                               current_state["board"]["height"])
+
+        if not my_possible_moves:
+            # No moves available - we'll die
+            return {"score": -1000000, "alive": False, "health": 0, "space": 0}
+
+        # Pick move with most space (simple heuristic for speed)
+        best_space = -1
+        best_next_move = my_possible_moves[0]
+
+        for move in my_possible_moves:
+            # Calculate where this move leads
+            test_head = {"x": current_state["you"]["body"][0]["x"],
+                        "y": current_state["you"]["body"][0]["y"]}
+            if move == "up":
+                test_head["y"] += 1
+            elif move == "down":
+                test_head["y"] -= 1
+            elif move == "left":
+                test_head["x"] -= 1
+            elif move == "right":
+                test_head["x"] += 1
+
+            # Count space
+            obstacles = get_all_obstacles(current_state, include_tail=False)
+            space = flood_fill(test_head, current_state["board"]["width"],
+                             current_state["board"]["height"], obstacles)
+
+            if space > best_space:
+                best_space = space
+                best_next_move = move
+
+        current_move = best_next_move
+
+    # Reached end of simulation - evaluate final state
+    if current_state["you"] is None:
+        return {"score": -1000000, "alive": False, "health": 0, "space": 0}
+
+    my_head = current_state["you"]["body"][0]
+    obstacles = get_all_obstacles(current_state, include_tail=False)
+    space = flood_fill(my_head, current_state["board"]["width"],
+                      current_state["board"]["height"], obstacles)
+
+    health = current_state["you"]["health"]
+    length = len(current_state["you"]["body"])
+
+    # Score based on survival, health, space, and length
+    score = health * 100 + space * 10 + length * 50
+
+    return {
+        "score": score,
+        "alive": True,
+        "health": health,
+        "space": space
+    }
 
 
 def evaluate_move(direction: str, game_state: dict, use_prediction: bool = True) -> dict:
@@ -564,21 +573,20 @@ def evaluate_move(direction: str, game_state: dict, use_prediction: bool = True)
     if not is_safe_move(new_head, game_state, my_length):
         return {"score": -10000, "reasons": ["INSTANT DEATH: Wall or body collision"], "direction": direction}
 
-    # PREDICTIVE SIMULATION: Simulate 15 moves ahead for comprehensive trap detection
+    # PREDICTIVE SIMULATION: Use deep simulation with 12-move lookahead (balanced)
     if use_prediction:
-        prediction_depth = 15  # Increased to 15 moves for better trap detection
-        future_outcome = simulate_future(game_state, direction, prediction_depth, prediction_depth)
+        prediction_depth = 12  # 12-move lookahead for balance of speed and accuracy
+        future_outcome = deep_simulation(game_state, direction, prediction_depth)
 
-        if not future_outcome["alive"]:
+        if not future_outcome["alive"] or future_outcome["score"] < -500000:
             # DEATH PREDICTION = ABSOLUTELY AVOID THIS!
             score -= 15000
             reasons.append(f"💀💀💀 PREDICTION: DEATH in {prediction_depth} moves! (-15000)")
         else:
-            # Reward based on predicted health and space
-            health_bonus = future_outcome["health"] * 20
-            space_bonus = min(future_outcome["space"], 100) * 10
-            score += health_bonus + space_bonus
-            reasons.append(f"✓ PREDICTION: Survives (health:{future_outcome['health']}, space:{future_outcome['space']}) (+{health_bonus + space_bonus})")
+            # Reward based on predicted score (which includes health, space, length)
+            prediction_bonus = min(future_outcome["score"] // 10, 3000)
+            score += prediction_bonus
+            reasons.append(f"✓ PREDICTION: Score {future_outcome['score']} (health:{future_outcome['health']}, space:{future_outcome['space']}) (+{prediction_bonus})")
 
     # Get obstacles for flood fill (excluding tails)
     obstacles = get_all_obstacles(game_state, include_tail=False)
@@ -756,7 +764,6 @@ def evaluate_move(direction: str, game_state: dict, use_prediction: bool = True)
         else:
             # Not eating this turn, but check path to nearest food
             nearest_food = min(food_list, key=lambda f: manhattan_distance(new_head, f))
-            food_distance = manhattan_distance(new_head, nearest_food)
 
             obstacles_with_tail = get_all_obstacles(game_state, include_tail=True)
             path_to_food = bfs_path(new_head, nearest_food, board_width, board_height, obstacles_with_tail)
@@ -819,11 +826,8 @@ def evaluate_move(direction: str, game_state: dict, use_prediction: bool = True)
 def move(game_state: typing.Dict) -> typing.Dict:
     """
     Main move function with advanced prediction and evaluation.
-    Simulates 10-15 moves ahead for all snakes.
+    Uses minimax search with 20-move lookahead.
     """
-    my_head = game_state["you"]["body"][0]
-    my_neck = game_state["you"]["body"][1] if len(game_state["you"]["body"]) > 1 else my_head
-
     # Get all possible moves (using helper function for consistency)
     possible_moves = get_possible_moves(game_state["you"],
                                        game_state["board"]["width"],
@@ -872,13 +876,13 @@ def move(game_state: typing.Dict) -> typing.Dict:
                 new_head["y"] < 0 or new_head["y"] >= board_height):
                 survival_score = -100000  # Wall = definitely bad
             else:
-                # Simulate and see how long we survive
-                future_outcome = simulate_future(game_state, direction, 15, 15)
-                if future_outcome["alive"]:
-                    survival_score = 50000 + future_outcome["health"] * 100 + future_outcome["space"]
+                # Simulate and see how long we survive using deep simulation
+                future_outcome = deep_simulation(game_state, direction, 12)
+                if future_outcome["alive"] and future_outcome["score"] > -500000:
+                    survival_score = 50000 + future_outcome["score"]
                 else:
                     # Even if we die, prefer moves that give us more space/health before death
-                    survival_score = future_outcome["health"] * 10 + future_outcome["space"]
+                    survival_score = max(future_outcome["score"], -50000)
 
             survival_evaluations.append({
                 "direction": direction,
