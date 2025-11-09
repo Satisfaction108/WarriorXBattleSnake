@@ -77,6 +77,137 @@ def bfs_distance(start: dict, goal: dict, board_width: int, board_height: int, o
     return len(path) if path else -1
 
 
+def validate_path_safety(path_directions: list, start_pos: dict, game_state: dict,
+                         min_escape_routes: int = 2, min_space: int = None) -> tuple:
+    """
+    Validates if following a path maintains safety at each step.
+    Returns (is_safe, first_unsafe_step, reason).
+
+    Args:
+        path_directions: List of directions to follow
+        start_pos: Starting position
+        game_state: Current game state
+        min_escape_routes: Minimum number of escape routes required at each step
+        min_space: Minimum flood fill space required at each step (defaults to snake length * 2)
+
+    Returns:
+        (True, -1, "") if path is safe
+        (False, step_number, reason) if path becomes unsafe
+    """
+    if not path_directions:
+        return (True, -1, "")
+
+    board_width = game_state["board"]["width"]
+    board_height = game_state["board"]["height"]
+    my_length = len(game_state["you"]["body"])
+
+    if min_space is None:
+        min_space = my_length * 2
+
+    # Simulate following the path
+    current_pos = {"x": start_pos["x"], "y": start_pos["y"]}
+
+    for step, direction in enumerate(path_directions):
+        # Move to next position
+        if direction == "up":
+            current_pos["y"] += 1
+        elif direction == "down":
+            current_pos["y"] -= 1
+        elif direction == "left":
+            current_pos["x"] -= 1
+        elif direction == "right":
+            current_pos["x"] += 1
+
+        # Check escape routes from this position
+        escape_count = 0
+        for test_dir in ["up", "down", "left", "right"]:
+            test_pos = {"x": current_pos["x"], "y": current_pos["y"]}
+            if test_dir == "up":
+                test_pos["y"] += 1
+            elif test_dir == "down":
+                test_pos["y"] -= 1
+            elif test_dir == "left":
+                test_pos["x"] -= 1
+            elif test_dir == "right":
+                test_pos["x"] += 1
+
+            if is_safe_move(test_pos, game_state, my_length):
+                escape_count += 1
+
+        if escape_count < min_escape_routes:
+            return (False, step, f"Only {escape_count} escape routes at step {step}")
+
+        # Check available space from this position
+        obstacles = get_all_obstacles(game_state, include_tail=False)
+        available_space = flood_fill(current_pos, board_width, board_height, obstacles)
+
+        if available_space < min_space:
+            return (False, step, f"Only {available_space} space at step {step} (need {min_space})")
+
+    return (True, -1, "")
+
+
+def detect_dead_end(position: dict, game_state: dict, max_depth: int = 5) -> tuple:
+    """
+    Detects if a position leads to a dead end within max_depth moves.
+    Uses recursive exploration to find if all paths from this position lead to traps.
+
+    Returns (is_dead_end, depth_to_trap, escape_routes_at_trap).
+    """
+    board_width = game_state["board"]["width"]
+    board_height = game_state["board"]["height"]
+    my_length = len(game_state["you"]["body"])
+    obstacles = get_all_obstacles(game_state, include_tail=False)
+
+    def explore(pos: dict, depth: int, visited: set) -> tuple:
+        """Recursively explore from position. Returns (min_escape_routes, depth_found)."""
+        if depth >= max_depth:
+            return (4, depth)  # Assume safe if we can survive max_depth moves
+
+        pos_tuple = (pos["x"], pos["y"])
+        if pos_tuple in visited:
+            return (4, depth)  # Already explored, assume safe
+
+        visited.add(pos_tuple)
+
+        # Count safe moves from this position
+        safe_moves = []
+        for direction in ["up", "down", "left", "right"]:
+            next_pos = {"x": pos["x"], "y": pos["y"]}
+            if direction == "up":
+                next_pos["y"] += 1
+            elif direction == "down":
+                next_pos["y"] -= 1
+            elif direction == "left":
+                next_pos["x"] -= 1
+            elif direction == "right":
+                next_pos["x"] += 1
+
+            if is_safe_move(next_pos, game_state, my_length):
+                safe_moves.append(next_pos)
+
+        if len(safe_moves) == 0:
+            return (0, depth)  # Dead end found!
+        elif len(safe_moves) == 1:
+            return (1, depth)  # Only one escape - very dangerous
+
+        # Recursively check all safe moves
+        min_future_escapes = 4
+        min_depth = max_depth
+        for next_pos in safe_moves:
+            future_escapes, future_depth = explore(next_pos, depth + 1, visited.copy())
+            if future_escapes < min_future_escapes:
+                min_future_escapes = future_escapes
+                min_depth = future_depth
+
+        return (min_future_escapes, min_depth)
+
+    min_escapes, depth_found = explore(position, 0, set())
+    is_dead_end = min_escapes == 0
+
+    return (is_dead_end, depth_found, min_escapes)
+
+
 # ============================================================================
 # FLOOD FILL - SPACE EVALUATION
 # ============================================================================
@@ -584,10 +715,26 @@ def prioritize_food(game_state: dict, position: dict) -> tuple:
 
     for food in food_list:
         # Calculate actual path distance (not just Manhattan)
-        path_dist = bfs_distance(position, food, board_width, board_height, obstacles)
+        obstacles_with_tail = get_all_obstacles(game_state, include_tail=True)
+        path_to_food = bfs_path(position, food, board_width, board_height, obstacles_with_tail)
 
-        if path_dist == -1:
+        if not path_to_food:
             continue  # Unreachable
+
+        path_dist = len(path_to_food)
+
+        # CRITICAL SAFETY CHECK: Validate the entire path to food is safe!
+        # This prevents the snake from committing to dangerous food paths
+        is_path_safe, unsafe_step, safety_reason = validate_path_safety(
+            path_to_food, position, game_state,
+            min_escape_routes=2,  # Require at least 2 escape routes at each step
+            min_space=my_length * 2  # Require enough space to maneuver
+        )
+
+        if not is_path_safe:
+            # Path is unsafe - skip this food even if we're hungry!
+            # It's better to survive longer than to die trying to reach food
+            continue
 
         # SAFETY CHECK: After eating, do we have escape space?
         # Simulate being at food position with +1 length
@@ -872,11 +1019,11 @@ def evaluate_move(direction: str, game_state: dict, use_prediction: bool = True)
         num_opponents = len([s for s in game_state["board"]["snakes"] if s["id"] != game_state["you"]["id"]])
 
         if my_health < 20 or num_opponents == 1:
-            prediction_depth = 8  # Deeper search when critical or 1v1
+            prediction_depth = 10  # Deeper search when critical or 1v1 (was 8)
         elif num_opponents <= 2:
-            prediction_depth = 7  # Medium depth for few opponents
+            prediction_depth = 9   # Medium depth for few opponents (was 7)
         else:
-            prediction_depth = 6  # Standard depth for many opponents
+            prediction_depth = 8   # Standard depth for many opponents (was 6)
 
         # Simulate this move first with smart opponent prediction
         opponent_moves = {}
@@ -952,6 +1099,37 @@ def evaluate_move(direction: str, game_state: dict, use_prediction: bool = True)
         score += min(available_space * 8, 800)  # Increased from *5, 500
         reasons.append(f"✓ SPACE: {available_space} cells")
 
+    # CORRIDOR DETECTION: Penalize entering narrow corridors heavily
+    # A corridor is when we have walls/obstacles on both sides
+    # Check if we're entering a 1-wide or 2-wide corridor
+    x, y = new_head["x"], new_head["y"]
+
+    # Check horizontal corridor (walls/obstacles above and below)
+    above_blocked = (y + 1 >= board_height or
+                     (x, y + 1) in obstacles or
+                     not is_safe_move({"x": x, "y": y + 1}, game_state, my_length))
+    below_blocked = (y - 1 < 0 or
+                     (x, y - 1) in obstacles or
+                     not is_safe_move({"x": x, "y": y - 1}, game_state, my_length))
+
+    # Check vertical corridor (walls/obstacles left and right)
+    left_blocked = (x - 1 < 0 or
+                    (x - 1, y) in obstacles or
+                    not is_safe_move({"x": x - 1, "y": y}, game_state, my_length))
+    right_blocked = (x + 1 >= board_width or
+                     (x + 1, y) in obstacles or
+                     not is_safe_move({"x": x + 1, "y": y}, game_state, my_length))
+
+    in_horizontal_corridor = above_blocked and below_blocked
+    in_vertical_corridor = left_blocked and right_blocked
+
+    if in_horizontal_corridor or in_vertical_corridor:
+        # We're in a 1-wide corridor - VERY DANGEROUS!
+        penalty = 5000
+        score -= penalty
+        corridor_type = "horizontal" if in_horizontal_corridor else "vertical"
+        reasons.append(f"🚫🚫 CORRIDOR: Entering {corridor_type} 1-wide corridor! (-{penalty})")
+
     # FUTURE MOBILITY: Check if we'll have escape routes after this move
     # Count how many safe moves we'll have from the new position
     future_safe_moves = 0
@@ -986,6 +1164,26 @@ def evaluate_move(direction: str, game_state: dict, use_prediction: bool = True)
         # Multiple escape routes - good!
         score += 500  # Increased from 300
         reasons.append(f"✓ SAFE: {future_safe_moves} escape routes (+500)")
+
+    # DEAD END DETECTION: Check if this move leads to a dead end within 5 moves
+    # This is CRITICAL to avoid getting trapped!
+    is_dead_end, depth_to_trap, min_escapes = detect_dead_end(new_head, game_state, max_depth=5)
+
+    if is_dead_end:
+        # This path leads to certain death!
+        penalty = 15000
+        score -= penalty
+        reasons.append(f"💀💀 DEAD END: Leads to trap in {depth_to_trap} moves! (-{penalty})")
+    elif min_escapes == 1 and depth_to_trap <= 3:
+        # This path leads to a very tight situation soon
+        penalty = 6000
+        score -= penalty
+        reasons.append(f"🚫 DANGEROUS PATH: Only 1 escape in {depth_to_trap} moves (-{penalty})")
+    elif min_escapes <= 2 and depth_to_trap <= 2:
+        # This path gets tight very quickly
+        penalty = 3000
+        score -= penalty
+        reasons.append(f"⚠️  TIGHT PATH: Limited escapes in {depth_to_trap} moves (-{penalty})")
 
     # EDGE AWARENESS: Avoid getting trapped against walls, especially when opponents are nearby
     distance_to_left_wall = new_head["x"]
@@ -1129,11 +1327,25 @@ def evaluate_move(direction: str, game_state: dict, use_prediction: bool = True)
             path_to_food = bfs_path(new_head, best_food, board_width, board_height, obstacles_with_tail)
 
             if path_to_food:
-                # Use the composite food value score directly
-                # Add urgency boost for critical situations - INCREASED
-                path_bonus = max(food_value // 2, urgency * 500)  # Increased from urgency * 300
-                score += path_bonus
-                reasons.append(f"🍎 FOOD SEEK: {len(path_to_food)} moves, value:{food_value} (+{path_bonus})")
+                # VALIDATE PATH SAFETY: Make sure the path to food is actually safe!
+                # This is critical to avoid getting trapped while seeking food
+                is_safe, unsafe_step, reason = validate_path_safety(
+                    path_to_food, new_head, game_state,
+                    min_escape_routes=2,  # Require at least 2 escape routes at each step
+                    min_space=my_length * 2  # Require enough space to maneuver
+                )
+
+                if is_safe:
+                    # Path is safe! Use the composite food value score directly
+                    # Add urgency boost for critical situations - INCREASED
+                    path_bonus = max(food_value // 2, urgency * 500)  # Increased from urgency * 300
+                    score += path_bonus
+                    reasons.append(f"🍎 FOOD SEEK: {len(path_to_food)} moves, SAFE PATH, value:{food_value} (+{path_bonus})")
+                else:
+                    # Path exists but is UNSAFE - would lead to trap!
+                    penalty = 4000 if urgency >= 6 else 2000
+                    score -= penalty
+                    reasons.append(f"🚫 UNSAFE FOOD PATH: {reason} (-{penalty})")
             else:
                 # No path to prioritized food - INCREASED PENALTIES
                 if urgency >= 8:  # Changed from > 7
