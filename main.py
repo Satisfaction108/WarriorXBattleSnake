@@ -1023,7 +1023,8 @@ def evaluate_move(direction: str, game_state: dict, use_prediction: bool = True)
             return {"score": -10000, "reasons": ["INSTANT DEATH: Body collision"], "direction": direction}
 
     # PREDICTIVE SIMULATION: Use minimax with alpha-beta pruning
-    if use_prediction:
+    # DISABLE in early game - it makes the snake too conservative!
+    if use_prediction and not is_early_game:
         # Adaptive depth: deeper search in critical situations
         num_opponents = len([s for s in game_state["board"]["snakes"] if s["id"] != game_state["you"]["id"]])
 
@@ -1349,8 +1350,8 @@ def evaluate_move(direction: str, game_state: dict, use_prediction: bool = True)
         if eating_food:
             # EATING FOOD THIS TURN = MASSIVE BONUS!
             if is_early_game:
-                # EARLY GAME: Food is EVERYTHING! Massive bonus
-                food_bonus = 50000 + (urgency * 5000) + max(food_value, 0)
+                # EARLY GAME: Food is EVERYTHING! INSANE bonus to override all penalties
+                food_bonus = 100000 + (urgency * 10000) + max(food_value, 0)
                 score += food_bonus
                 reasons.append(f"🍎🍎🍎 EARLY GAME FOOD! Urgency:{urgency} (+{food_bonus})")
             else:
@@ -1366,8 +1367,8 @@ def evaluate_move(direction: str, game_state: dict, use_prediction: bool = True)
             if path_to_food:
                 # VALIDATE PATH SAFETY: Only in late game with good health
                 if is_early_game:
-                    # EARLY GAME: NO VALIDATION! Just go for food!
-                    path_bonus = max(food_value // 2, urgency * 2000)  # Huge bonus
+                    # EARLY GAME: NO VALIDATION! Just go for food! MASSIVE BONUS!
+                    path_bonus = max(food_value // 2, urgency * 5000)  # INSANE bonus
                     score += path_bonus
                     reasons.append(f"🍎🍎🍎 EARLY GAME SEEK: {len(path_to_food)} moves to food (+{path_bonus})")
                 elif my_health > 70:
@@ -1394,13 +1395,16 @@ def evaluate_move(direction: str, game_state: dict, use_prediction: bool = True)
                     score += path_bonus
                     reasons.append(f"🍎🍎 AGGRESSIVE FOOD SEEK: {len(path_to_food)} moves, value:{food_value} (+{path_bonus})")
             else:
-                # No path to prioritized food - INCREASED PENALTIES
-                if urgency >= 8:  # Changed from > 7
-                    score -= 5000  # Increased from 3000
-                    reasons.append("💀 CRITICAL: No food path!")
-                elif urgency >= 4:  # Changed from > 3
-                    score -= 2000  # Increased from 1000
-                    reasons.append("⚠️  URGENT: No food path!")
+                # No path to prioritized food
+                if not is_early_game:
+                    # Late game: Penalize not having food path
+                    if urgency >= 8:
+                        score -= 5000
+                        reasons.append("💀 CRITICAL: No food path!")
+                    elif urgency >= 4:
+                        score -= 2000
+                        reasons.append("⚠️  URGENT: No food path!")
+                # Early game: Don't penalize - just keep moving!
         elif food_value > 200:
             # High value food exists but we're not seeking it yet
             # This is for truly opportunistic eating (nearby safe food)
@@ -1526,11 +1530,14 @@ def move(game_state: typing.Dict) -> typing.Dict:
     turn = game_state["turn"]
 
     # DESPERATION MODE: If all moves are terrible, try to find the one that survives longest
+    # OR prefer head-to-head with equal snake over solo death!
     if best_move["score"] <= -5000:
-        print("⚠️  DESPERATION MODE: All moves look fatal! Finding longest survival...")
+        print("⚠️  DESPERATION MODE: All moves look fatal! Finding best death option...")
 
-        # Re-evaluate each move focusing purely on survival time
+        # Re-evaluate each move focusing on survival or taking opponent with us
         survival_evaluations = []
+        my_length = len(game_state["you"]["body"])
+
         for direction in ["up", "down", "left", "right"]:
             my_head = game_state["you"]["body"][0]
             new_head = {"x": my_head["x"], "y": my_head["y"]}
@@ -1549,35 +1556,57 @@ def move(game_state: typing.Dict) -> typing.Dict:
             if (new_head["x"] < 0 or new_head["x"] >= board_width or
                 new_head["y"] < 0 or new_head["y"] >= board_height):
                 survival_score = -100000  # Wall = definitely bad
+                death_type = "wall"
             else:
-                # Use minimax to evaluate survival time
-                opponent_moves = {}
+                # Check if this is a head-to-head collision with equal snake
+                is_equal_head_to_head = False
                 for snake in game_state["board"]["snakes"]:
                     if snake["id"] == game_state["you"]["id"]:
                         continue
-                    snake_moves = get_possible_moves(snake, game_state["board"]["width"],
-                                                    game_state["board"]["height"])
-                    if snake_moves:
-                        opponent_moves[snake["id"]] = snake_moves[0]
+                    snake_head = snake["body"][0]
+                    snake_length = len(snake["body"])
 
-                test_state = simulate_game_state(game_state, direction, opponent_moves)
-                if test_state["you"] is not None:
-                    future_score, _ = minimax_alpha_beta(test_state, game_state["you"]["id"],
-                                                        6, float('-inf'), float('inf'), True, direction)
-                    survival_score = 50000 + int(future_score)
+                    # Check if opponent could move to same position
+                    if abs(snake_head["x"] - new_head["x"]) + abs(snake_head["y"] - new_head["y"]) == 1:
+                        if snake_length == my_length:
+                            is_equal_head_to_head = True
+                            break
+
+                if is_equal_head_to_head:
+                    # PREFER THIS! Take the opponent with us!
+                    survival_score = -10000  # Bad, but better than solo death
+                    death_type = "mutual_destruction"
                 else:
-                    survival_score = -50000
+                    # Use minimax to evaluate survival time
+                    opponent_moves = {}
+                    for snake in game_state["board"]["snakes"]:
+                        if snake["id"] == game_state["you"]["id"]:
+                            continue
+                        snake_moves = get_possible_moves(snake, game_state["board"]["width"],
+                                                        game_state["board"]["height"])
+                        if snake_moves:
+                            opponent_moves[snake["id"]] = snake_moves[0]
+
+                    test_state = simulate_game_state(game_state, direction, opponent_moves)
+                    if test_state["you"] is not None:
+                        future_score, _ = minimax_alpha_beta(test_state, game_state["you"]["id"],
+                                                            6, float('-inf'), float('inf'), True, direction)
+                        survival_score = 50000 + int(future_score)
+                        death_type = "survival"
+                    else:
+                        survival_score = -50000
+                        death_type = "immediate_death"
 
             survival_evaluations.append({
                 "direction": direction,
                 "score": survival_score,
-                "reasons": [f"Survival score: {survival_score}"]
+                "reasons": [f"{death_type}: {survival_score}"]
             })
 
-        # Pick the move with best survival
+        # Pick the move with best survival (or mutual destruction over solo death)
         survival_evaluations.sort(key=lambda x: x["score"], reverse=True)
         best_move = survival_evaluations[0]
-        print(f"   Desperation choice: {best_move['direction'].upper()} (survival: {best_move['score']})")
+        print(f"   Desperation choice: {best_move['direction'].upper()} ({best_move['reasons'][0]})")
 
     print(f"\n{'='*60}")
     print(f"MOVE {turn} | Health: {game_state['you']['health']} | Length: {len(game_state['you']['body'])}")
