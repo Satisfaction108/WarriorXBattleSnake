@@ -78,7 +78,7 @@ def bfs_distance(start: dict, goal: dict, board_width: int, board_height: int, o
 
 
 def validate_path_safety(path_directions: list, start_pos: dict, game_state: dict,
-                         min_escape_routes: int = 2, min_space: int = None) -> tuple:
+                         min_escape_routes: int = 2, min_space: typing.Optional[int] = None) -> tuple:
     """
     Validates if following a path maintains safety at each step.
     Returns (is_safe, first_unsafe_step, reason).
@@ -603,7 +603,8 @@ def calculate_voronoi_space(game_state: dict) -> dict:
                 neighbor_key = (neighbor["x"], neighbor["y"])
                 if neighbor_key not in visited:
                     visited.add(neighbor_key)
-                    queue.append((neighbor, dist + 1))
+                    neighbor_pos = {"x": neighbor["x"], "y": neighbor["y"]}
+                    queue.append((neighbor_pos, dist + 1))
 
     # Count cells controlled by each snake
     control_count = {snake["id"]: 0 for snake in snakes}
@@ -791,14 +792,19 @@ def prioritize_food(game_state: dict, position: dict) -> tuple:
             best_value = food_value
             best_food = food
 
-    # AGGRESSIVE SEEKING: Almost always seek food to grow fast!
-    # This is how top players dominate - they grow quickly
+    # BALANCED SEEKING: Seek food when it's valuable and safe
+    # Don't pursue food recklessly - balance growth with survival
     if best_food is None:
-        # No reachable food - don't seek even if urgent
+        # No reachable food - don't seek
         should_seek = False
     else:
-        # ALWAYS seek food if we found any! Growth is key to winning
-        should_seek = True  # Changed from conditional - always seek food!
+        # Only seek food if it's worth it OR we're desperate
+        # Positive value means benefits outweigh risks
+        if best_value > 0 or urgency >= 8:
+            should_seek = True
+        else:
+            # Food exists but is too risky/far - focus on positioning
+            should_seek = False
 
     return (should_seek, best_food, urgency, best_value)
 
@@ -1234,17 +1240,19 @@ def evaluate_move(direction: str, game_state: dict, use_prediction: bool = True)
     # PHASE 3: FOOD ACQUISITION - Eat or seek food
     # ========================================================================
 
-    # Determine health urgency
+    # Determine health urgency - balanced approach
     if my_health < 15:
         urgency = 10  # CRITICAL
     elif my_health < 30:
-        urgency = 9   # VERY HIGH
+        urgency = 8   # VERY HIGH
     elif my_health < 50:
-        urgency = 7   # HIGH
+        urgency = 6   # HIGH
     elif my_health < 70:
-        urgency = 6   # MEDIUM
+        urgency = 4   # MEDIUM
+    elif my_health < 90:
+        urgency = 3   # LOW
     else:
-        urgency = 5   # GROWTH MODE - Always pursue food to get bigger!
+        urgency = 2   # MINIMAL - focus on positioning
 
     # Check if we're eating food THIS turn
     eating_food = False
@@ -1272,8 +1280,8 @@ def evaluate_move(direction: str, game_state: dict, use_prediction: bool = True)
                         reasons.append(f"⚠️  RISKY FOOD: {food_safety['escape_routes']} escapes, avoiding")
                 else:
                     # Food is safe - EAT IT!
-                    # Bigger bonus for safe food to encourage growth
-                    food_bonus = 400000 + (urgency * 25000)
+                    # Balanced bonus that scales with urgency
+                    food_bonus = 350000 + (urgency * 20000)
                     score += food_bonus
                     reasons.append(f"🍎🍎🍎 SAFE FOOD! Health:{my_health}, Urgency:{urgency} (+{food_bonus})")
                 break
@@ -1298,12 +1306,14 @@ def evaluate_move(direction: str, game_state: dict, use_prediction: bool = True)
             path = bfs_path(new_head, food, board_width, board_height, obstacles_with_tail)
 
             if path:
-                # Calculate food value - prioritize closer food and growth
+                # Calculate food value - balanced approach
                 distance = len(path)
-                safety_bonus = 2000 if food_safety["is_safe"] else 500
-                urgency_bonus = urgency * 1000  # Increased from 500
-                proximity_bonus = max(0, 200 - distance * 15)  # Favor closer food more
-                growth_bonus = 1000  # Always value growth
+                safety_bonus = 2000 if food_safety["is_safe"] else 0  # Only pursue safe food when not urgent
+                urgency_bonus = urgency * 800
+                proximity_bonus = max(0, 150 - distance * 12)
+                
+                # Only add growth bonus if food is safe OR we're desperate
+                growth_bonus = 500 if (food_safety["is_safe"] or urgency >= 8) else 0
 
                 food_score = safety_bonus + urgency_bonus + proximity_bonus + growth_bonus
 
@@ -1317,16 +1327,23 @@ def evaluate_move(direction: str, game_state: dict, use_prediction: bool = True)
             # Check if this move is on the path to food
             # path[0] is a direction string like "up", "down", etc.
             if len(path) > 0 and path[0] == direction:
-                # We're moving toward food! Increased bonus to prioritize growth
-                path_bonus = 150000 + (urgency * 15000) + best_food_score
-                score += path_bonus
-                reasons.append(f"🍎 SEEKING FOOD: {len(path)} moves away (+{path_bonus})")
+                # We're moving toward food - balance urgency with safety
+                # Only give big bonus if safe OR desperate
+                if food_safety["is_safe"] or urgency >= 8:
+                    path_bonus = 120000 + (urgency * 12000) + best_food_score
+                    score += path_bonus
+                    reasons.append(f"🍎 SEEKING FOOD: {len(path)} moves away (+{path_bonus})")
+                else:
+                    # Food path exists but not safe - smaller bonus
+                    path_bonus = 40000 + (urgency * 8000)
+                    score += path_bonus
+                    reasons.append(f"🍎 FOOD NEARBY: {len(path)} moves, risky (+{path_bonus})")
             else:
                 # Not on optimal path, but give bonus for getting closer
                 current_dist = manhattan_distance(my_head, food)
                 new_dist = manhattan_distance(new_head, food)
                 if new_dist < current_dist:
-                    score += 80000 + (urgency * 8000)
+                    score += 50000 + (urgency * 6000)
                     reasons.append(f"🍎 MOVING TOWARD FOOD: {new_dist} away")
 
     # CRITICAL: If health is critical and we're not eating/seeking, HUGE penalty
