@@ -1640,11 +1640,13 @@ recent_moves = []
 
 def move(game_state: typing.Dict) -> typing.Dict:
     """
-    Main move function with comprehensive game tree search.
-    Uses sequential thinking to evaluate all opponent move combinations.
-    Looks ahead 6-10 moves depending on number of opponents.
+    Main move function with fast, reliable move evaluation.
+    Optimized for sub-500ms response time.
     """
     global recent_moves
+
+    import time
+    start_time = time.time()
 
     # Get all possible moves (using helper function for consistency)
     my_head = game_state["you"]["body"][0]
@@ -1657,88 +1659,44 @@ def move(game_state: typing.Dict) -> typing.Dict:
     opponents = [s for s in game_state["board"]["snakes"] if s["id"] != my_id]
     num_opponents = len(opponents)
 
+    turn = game_state["turn"]
+
     print(f"\n{'='*80}")
-    print(f"🧠 SEQUENTIAL THINKING - COMPREHENSIVE GAME TREE SEARCH")
+    print(f"🧠 WARRIORX BATTLESNAKE - TURN {turn}")
     print(f"{'='*80}")
     print(f"📍 Position: ({my_head['x']}, {my_head['y']}) | Health: {my_health} | Length: {my_length}")
     print(f"🎮 Opponents: {num_opponents} | Board: {board_width}x{board_height}")
 
     possible_moves = get_possible_moves(game_state["you"], board_width, board_height)
 
-    print(f"🎯 Valid moves: {possible_moves}")
+    print(f"🎯 Valid moves from get_possible_moves(): {possible_moves}")
 
     if not possible_moves:
         # No valid moves - try anything as last resort
         possible_moves = ["up", "down", "left", "right"]
         print("⚠️  WARNING: No valid moves found! Trying all directions as last resort.")
 
+    # Log current position details
+    print(f"\n📊 Current State:")
+    print(f"   Head: ({my_head['x']}, {my_head['y']})")
+    if len(game_state["you"]["body"]) > 1:
+        neck = game_state["you"]["body"][1]
+        print(f"   Neck: ({neck['x']}, {neck['y']})")
+    print(f"   Body length: {my_length}")
+    print(f"   Recent moves: {recent_moves[-5:] if recent_moves else 'None'}")
+
     # ========================================================================
     # COMPREHENSIVE GAME TREE SEARCH
     # ========================================================================
 
-    # Determine search depth based on number of opponents and game state
-    # We need to balance depth with computational feasibility
-    # With 2 opponents and ~9 combinations per turn:
-    # Depth 2: 9^2 = 81 scenarios (very fast)
-    # Depth 3: 9^3 = 729 scenarios (fast)
-    # Depth 4: 9^4 = 6,561 scenarios (acceptable)
-    # Depth 5: 9^5 = 59,049 scenarios (slow)
-
-    if num_opponents == 0:
-        search_depth = 8   # No opponents, can search deep
-    elif num_opponents == 1:
-        search_depth = 5   # 1 opponent, ~4 moves each = 4^5 = 1k scenarios
-    elif num_opponents == 2:
-        search_depth = 3   # 2 opponents, ~9 combinations = 9^3 = 729 scenarios
-    else:
-        search_depth = 2   # 3+ opponents, ~27 combinations = 27^2 = 729 scenarios
-
-    print(f"\n🔍 GAME TREE SEARCH (Depth: {search_depth})")
-    print(f"   Evaluating ALL opponent move combinations at each level...")
-
-    # Count total opponent combinations to show user
-    opponent_combinations = generate_all_opponent_move_combinations(game_state)
-    print(f"   Opponent combinations per turn: {len(opponent_combinations)}")
-
-    # Use comprehensive minimax to find best move
-    print(f"\n🤔 THINKING THROUGH SCENARIOS:")
-
-    minimax_score, minimax_move, total_scenarios = comprehensive_minimax(
-        game_state, my_id, search_depth,
-        float('-inf'), float('inf'), True, None, 0
-    )
-
-    print(f"\n✅ DECISION COMPLETE:")
-    print(f"   Total scenarios evaluated: {total_scenarios:,}")
-    print(f"   Best move: {minimax_move.upper() if minimax_move else 'NONE'}")
-    print(f"   Expected score: {minimax_score:.0f}")
-
-    # If comprehensive search found a good move, use it
-    if minimax_move and minimax_score > -500000:
-        print(f"\n🎯 SELECTED: {minimax_move.upper()} (Comprehensive search)")
-        print(f"{'='*80}\n")
-
-        recent_moves.append(minimax_move)
-        if len(recent_moves) > 10:
-            recent_moves = recent_moves[-10:]
-
-        # Dynamic shouts based on situation
-        shout = ""
-        turn = game_state["turn"]
-        if turn % 10 == 0:
-            shout = "WarriorX dominates!"
-        elif my_health < 30:
-            shout = "Need food!"
-        elif minimax_score > 2000:
-            shout = "Calculated victory!"
-
-        return {"move": minimax_move, "shout": shout}
-
     # ========================================================================
-    # FALLBACK: Use traditional evaluation if comprehensive search fails
+    # FAST EVALUATION: Use evaluate_move() for speed and reliability
     # ========================================================================
+    # The comprehensive minimax is too slow for 500ms timeout
+    # Using the faster evaluate_move() function instead
 
-    print(f"\n⚠️  Comprehensive search inconclusive, using traditional evaluation...")
+    print(f"\n🔍 FAST MOVE EVALUATION")
+    print(f"   Using optimized evaluation for sub-500ms response time...")
     print(f"{'='*80}")
 
     # Evaluate all possible moves with prediction
@@ -1951,8 +1909,10 @@ def move(game_state: typing.Dict) -> typing.Dict:
 
     # CRITICAL: Log the exact JSON response being returned
     import json
+    elapsed_time = time.time() - start_time
     print(f"\n🚀 RETURNING JSON RESPONSE: {json.dumps(response)}")
-    print(f"🚀 MOVE BEING SENT TO GAME: {chosen_direction.upper()}\n")
+    print(f"🚀 MOVE BEING SENT TO GAME: {chosen_direction.upper()}")
+    print(f"⏱️  Total time: {elapsed_time*1000:.1f}ms\n")
 
     return response
 
