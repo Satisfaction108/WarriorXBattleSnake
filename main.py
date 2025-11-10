@@ -11,6 +11,7 @@
 import random
 import typing
 from collections import deque
+from itertools import product
 
 # ============================================================================
 # HELPER FUNCTIONS AND DATA STRUCTURES
@@ -813,6 +814,44 @@ def prioritize_food(game_state: dict, position: dict) -> tuple:
 # ADVANCED MOVE LOGIC WITH PREDICTION
 # ============================================================================
 
+def generate_all_opponent_move_combinations(game_state: dict) -> list:
+    """
+    Generate ALL possible combinations of opponent moves.
+    Returns list of dictionaries mapping snake_id -> move.
+
+    Example: With 2 opponents each having 3 moves, returns 9 combinations.
+    """
+    opponents = [s for s in game_state["board"]["snakes"] if s["id"] != game_state["you"]["id"]]
+
+    if not opponents:
+        return [{}]
+
+    # Get all possible moves for each opponent
+    opponent_move_options = {}
+    opponent_ids = []
+
+    for snake in opponents:
+        moves = get_possible_moves(snake, game_state["board"]["width"], game_state["board"]["height"])
+        if not moves:
+            moves = ["up"]  # Fallback
+        opponent_move_options[snake["id"]] = moves
+        opponent_ids.append(snake["id"])
+
+    # Generate all combinations using itertools.product
+    move_lists = [opponent_move_options[snake_id] for snake_id in opponent_ids]
+    all_combinations = list(product(*move_lists))
+
+    # Convert to list of dictionaries
+    result = []
+    for combination in all_combinations:
+        move_dict = {}
+        for i, snake_id in enumerate(opponent_ids):
+            move_dict[snake_id] = combination[i]
+        result.append(move_dict)
+
+    return result
+
+
 def predict_opponent_moves(game_state: dict, depth: int = 1) -> list:
     """
     Predict possible opponent move combinations.
@@ -926,6 +965,86 @@ def evaluate_game_state(game_state: dict, my_id: str) -> float:
     )
 
     return score
+
+
+def comprehensive_minimax(game_state: dict, my_id: str, depth: int, alpha: float, beta: float,
+                         is_maximizing: bool, original_move: typing.Optional[str] = None,
+                         log_depth: int = 0) -> tuple:
+    """
+    Comprehensive minimax with alpha-beta pruning that considers ALL opponent move combinations.
+    Uses sequential thinking to evaluate every possible scenario.
+
+    Returns (score, best_move, scenarios_evaluated).
+    """
+    # Base case: max depth or game over
+    if depth == 0 or game_state["you"] is None:
+        score = evaluate_game_state(game_state, my_id)
+        return (score, original_move, 1)
+
+    # Check if we're dead
+    if game_state["you"] is None:
+        return (-1000000.0, None, 1)
+
+    scenarios_evaluated = 0
+
+    # Our turn - try each of our moves and consider ALL opponent responses
+    my_possible_moves = get_possible_moves(game_state["you"],
+                                           game_state["board"]["width"],
+                                           game_state["board"]["height"])
+
+    if not my_possible_moves:
+        return (-1000000.0, None, 1)
+
+    max_eval = float('-inf')
+    best_move = my_possible_moves[0]
+
+    for move in my_possible_moves:
+        # For this move, consider ALL possible opponent responses
+        opponent_combinations = generate_all_opponent_move_combinations(game_state)
+
+        # Find the worst-case scenario (assume opponents play optimally against us)
+        worst_case_score = float('inf')
+
+        for opponent_moves in opponent_combinations:
+            # Simulate this scenario
+            new_state = simulate_game_state(game_state, move, opponent_moves)
+
+            scenarios_evaluated += 1
+
+            # Recursively evaluate the next turn
+            if depth > 1 and new_state["you"] is not None:
+                eval_score, _, sub_scenarios = comprehensive_minimax(
+                    new_state, my_id, depth - 1, alpha, beta, True,
+                    original_move if original_move else move, log_depth + 1
+                )
+                scenarios_evaluated += sub_scenarios
+            else:
+                # At leaf node or we died, just evaluate
+                eval_score = evaluate_game_state(new_state, my_id)
+
+            # Track worst case for this move
+            if eval_score < worst_case_score:
+                worst_case_score = eval_score
+
+            # Alpha-beta pruning at opponent level
+            if worst_case_score <= alpha:
+                break  # This move is already worse than what we have
+
+        # Log scenario at top level
+        if log_depth == 0 and len(opponent_combinations) > 1:
+            print(f"   🤔 Move {move.upper()}: Evaluated {len(opponent_combinations)} opponent combinations, worst-case score: {worst_case_score:.0f}")
+
+        # Update best move based on worst-case scenario
+        if worst_case_score > max_eval:
+            max_eval = worst_case_score
+            best_move = move
+
+        # Alpha-beta pruning
+        alpha = max(alpha, worst_case_score)
+        if beta <= alpha:
+            break  # Beta cutoff
+
+    return (max_eval, best_move, scenarios_evaluated)
 
 
 def minimax_alpha_beta(game_state: dict, my_id: str, depth: int, alpha: float, beta: float,
@@ -1521,27 +1640,106 @@ recent_moves = []
 
 def move(game_state: typing.Dict) -> typing.Dict:
     """
-    Main move function with advanced prediction and evaluation.
-    Uses minimax search with 20-move lookahead.
+    Main move function with comprehensive game tree search.
+    Uses sequential thinking to evaluate all opponent move combinations.
+    Looks ahead 6-10 moves depending on number of opponents.
     """
     global recent_moves
 
     # Get all possible moves (using helper function for consistency)
     my_head = game_state["you"]["body"][0]
+    my_id = game_state["you"]["id"]
+    my_health = game_state["you"]["health"]
+    my_length = len(game_state["you"]["body"])
     board_width = game_state["board"]["width"]
     board_height = game_state["board"]["height"]
 
-    print(f"\n📍 Current Position: ({my_head['x']}, {my_head['y']}) on {board_width}x{board_height} board")
-    print(f"   Walls at: x={board_width}, y={board_height}")
+    opponents = [s for s in game_state["board"]["snakes"] if s["id"] != my_id]
+    num_opponents = len(opponents)
+
+    print(f"\n{'='*80}")
+    print(f"🧠 SEQUENTIAL THINKING - COMPREHENSIVE GAME TREE SEARCH")
+    print(f"{'='*80}")
+    print(f"📍 Position: ({my_head['x']}, {my_head['y']}) | Health: {my_health} | Length: {my_length}")
+    print(f"🎮 Opponents: {num_opponents} | Board: {board_width}x{board_height}")
 
     possible_moves = get_possible_moves(game_state["you"], board_width, board_height)
 
-    print(f"   Possible moves (wall-filtered): {possible_moves}")
+    print(f"🎯 Valid moves: {possible_moves}")
 
     if not possible_moves:
         # No valid moves - try anything as last resort
         possible_moves = ["up", "down", "left", "right"]
         print("⚠️  WARNING: No valid moves found! Trying all directions as last resort.")
+
+    # ========================================================================
+    # COMPREHENSIVE GAME TREE SEARCH
+    # ========================================================================
+
+    # Determine search depth based on number of opponents and game state
+    # We need to balance depth with computational feasibility
+    # With 2 opponents and ~9 combinations per turn:
+    # Depth 2: 9^2 = 81 scenarios (very fast)
+    # Depth 3: 9^3 = 729 scenarios (fast)
+    # Depth 4: 9^4 = 6,561 scenarios (acceptable)
+    # Depth 5: 9^5 = 59,049 scenarios (slow)
+
+    if num_opponents == 0:
+        search_depth = 8   # No opponents, can search deep
+    elif num_opponents == 1:
+        search_depth = 5   # 1 opponent, ~4 moves each = 4^5 = 1k scenarios
+    elif num_opponents == 2:
+        search_depth = 3   # 2 opponents, ~9 combinations = 9^3 = 729 scenarios
+    else:
+        search_depth = 2   # 3+ opponents, ~27 combinations = 27^2 = 729 scenarios
+
+    print(f"\n🔍 GAME TREE SEARCH (Depth: {search_depth})")
+    print(f"   Evaluating ALL opponent move combinations at each level...")
+
+    # Count total opponent combinations to show user
+    opponent_combinations = generate_all_opponent_move_combinations(game_state)
+    print(f"   Opponent combinations per turn: {len(opponent_combinations)}")
+
+    # Use comprehensive minimax to find best move
+    print(f"\n🤔 THINKING THROUGH SCENARIOS:")
+
+    minimax_score, minimax_move, total_scenarios = comprehensive_minimax(
+        game_state, my_id, search_depth,
+        float('-inf'), float('inf'), True, None, 0
+    )
+
+    print(f"\n✅ DECISION COMPLETE:")
+    print(f"   Total scenarios evaluated: {total_scenarios:,}")
+    print(f"   Best move: {minimax_move.upper() if minimax_move else 'NONE'}")
+    print(f"   Expected score: {minimax_score:.0f}")
+
+    # If comprehensive search found a good move, use it
+    if minimax_move and minimax_score > -500000:
+        print(f"\n🎯 SELECTED: {minimax_move.upper()} (Comprehensive search)")
+        print(f"{'='*80}\n")
+
+        recent_moves.append(minimax_move)
+        if len(recent_moves) > 10:
+            recent_moves = recent_moves[-10:]
+
+        # Dynamic shouts based on situation
+        shout = ""
+        turn = game_state["turn"]
+        if turn % 10 == 0:
+            shout = "WarriorX dominates!"
+        elif my_health < 30:
+            shout = "Need food!"
+        elif minimax_score > 2000:
+            shout = "Calculated victory!"
+
+        return {"move": minimax_move, "shout": shout}
+
+    # ========================================================================
+    # FALLBACK: Use traditional evaluation if comprehensive search fails
+    # ========================================================================
+
+    print(f"\n⚠️  Comprehensive search inconclusive, using traditional evaluation...")
+    print(f"{'='*80}")
 
     # Evaluate all possible moves with prediction
     move_evaluations = []
