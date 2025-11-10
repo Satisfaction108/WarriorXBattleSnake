@@ -1402,6 +1402,56 @@ def evaluate_move(direction: str, game_state: dict, use_prediction: bool = True)
     reasons.append("✅ IMMEDIATE SURVIVAL: Safe from instant death")
 
     # ========================================================================
+    # PHASE 1.5: PREDICTIVE OPPONENT MOVEMENT - Avoid where opponents might move
+    # ========================================================================
+
+    # Predict where opponents might move and avoid those cells
+    # This is CRITICAL in 4-player games to avoid collisions!
+    opponent_threat_cells = set()
+
+    for snake in game_state["board"]["snakes"]:
+        if snake["id"] == game_state["you"]["id"]:
+            continue
+
+        snake_head = snake["body"][0]
+        snake_length = len(snake["body"])
+
+        # Predict opponent's possible moves
+        possible_opponent_moves = [
+            {"x": snake_head["x"], "y": snake_head["y"] + 1},  # up
+            {"x": snake_head["x"], "y": snake_head["y"] - 1},  # down
+            {"x": snake_head["x"] - 1, "y": snake_head["y"]},  # left
+            {"x": snake_head["x"] + 1, "y": snake_head["y"]},  # right
+        ]
+
+        for opp_move in possible_opponent_moves:
+            # Check if opponent move is valid
+            if (opp_move["x"] >= 0 and opp_move["x"] < board_width and
+                opp_move["y"] >= 0 and opp_move["y"] < board_height):
+
+                # If opponent is same size or larger, avoid their possible moves
+                if snake_length >= my_length:
+                    opponent_threat_cells.add((opp_move["x"], opp_move["y"]))
+
+    # Penalize moving into cells where opponents might move
+    if (new_head["x"], new_head["y"]) in opponent_threat_cells:
+        # Check if this is a head-to-head situation
+        for snake in game_state["board"]["snakes"]:
+            if snake["id"] == game_state["you"]["id"]:
+                continue
+            snake_head = snake["body"][0]
+            if manhattan_distance(new_head, snake_head) == 1:
+                snake_length = len(snake["body"])
+                if snake_length > my_length:
+                    # Larger opponent might move here - DANGER!
+                    score -= 40000
+                    reasons.append(f"⚠️  OPPONENT THREAT: Larger snake might move here (-40000)")
+                elif snake_length == my_length:
+                    # Equal opponent might move here - risky
+                    score -= 15000
+                    reasons.append(f"⚠️  COLLISION RISK: Equal snake nearby (-15000)")
+
+    # ========================================================================
     # PHASE 2: COMPREHENSIVE TRAP ANALYSIS
     # ========================================================================
 
@@ -1439,19 +1489,18 @@ def evaluate_move(direction: str, game_state: dict, use_prediction: bool = True)
     # PHASE 3: FOOD ACQUISITION - Eat or seek food
     # ========================================================================
 
-    # Determine health urgency - balanced approach
+    # Determine health urgency - OPTIMIZED FOR 4-PLAYER
+    # In 4-player games, space control > food unless health is critical!
     if my_health < 15:
-        urgency = 10  # CRITICAL
-    elif my_health < 30:
-        urgency = 8   # VERY HIGH
-    elif my_health < 50:
-        urgency = 6   # HIGH
-    elif my_health < 70:
-        urgency = 4   # MEDIUM
-    elif my_health < 90:
-        urgency = 3   # LOW
+        urgency = 10  # CRITICAL - must eat NOW!
+    elif my_health < 25:
+        urgency = 8   # VERY HIGH - eat soon
+    elif my_health < 40:
+        urgency = 5   # MEDIUM - eat when safe
+    elif my_health < 60:
+        urgency = 3   # LOW - only if convenient
     else:
-        urgency = 2   # MINIMAL - focus on positioning
+        urgency = 1   # MINIMAL - focus on space control, not food!
 
     # Check if we're eating food THIS turn
     eating_food = False
@@ -1582,6 +1631,25 @@ def evaluate_move(direction: str, game_state: dict, use_prediction: bool = True)
     # PHASE 5: POSITIONING & TERRITORY CONTROL
     # ========================================================================
 
+    # TAIL CHASING - Following our own tail is SAFE (it moves away each turn)
+    # This is a key strategy for advanced snakes!
+    my_tail = my_body[-1]
+    dist_to_tail = manhattan_distance(new_head, my_tail)
+
+    # Strong bonus for moving toward tail (safe space!)
+    if dist_to_tail == 1:
+        # Adjacent to tail - very safe move!
+        score += 20000
+        reasons.append(f"🔄 TAIL CHASE: Following safe tail (+20000)")
+    elif dist_to_tail == 2:
+        # Near tail - safe direction
+        score += 10000
+        reasons.append(f"🔄 NEAR TAIL: Moving toward safety (+10000)")
+    elif dist_to_tail <= 4 and my_length > 6:
+        # Tail is nearby - good option for longer snakes
+        score += 4000
+        reasons.append(f"🔄 TAIL NEARBY: Safe area available (+4000)")
+
     # Center control - being in center gives more options and board dominance
     center_x = board_width // 2
     center_y = board_height // 2
@@ -1630,23 +1698,24 @@ def evaluate_move(direction: str, game_state: dict, use_prediction: bool = True)
                  new_head["y"] <= 1 or new_head["y"] >= board_height - 2)
 
     # Calculate edge penalty based on game state
-    # Be more aggressive about avoiding edges when we have opponents
-    num_opponents = len([s for s in game_state["board"]["snakes"] if s["id"] != game_state["you"]["id"]])
-    edge_multiplier = 1.0 + (num_opponents * 0.5)  # More opponents = avoid edges more
+    # OPTIMIZED FOR 4-PLAYER GAMES (always 3 opponents)
+    # Edges are EXTREMELY dangerous with 3 opponents competing for space!
+    num_opponents = 3  # Always 3 opponents in 4-player games
+    edge_multiplier = 2.5  # Much stronger edge avoidance for 4-player
 
     if is_corner:
-        corner_penalty = int(35000 * edge_multiplier)
+        corner_penalty = int(60000 * edge_multiplier)  # MASSIVE penalty for corners
         score -= corner_penalty
-        reasons.append(f"⚠️  CORNER: Very limited options, high trap risk! (-{corner_penalty})")
+        reasons.append(f"🚫 CORNER: DEATH TRAP in 4-player! (-{corner_penalty})")
     elif is_edge:
-        edge_penalty = int(15000 * edge_multiplier)
+        edge_penalty = int(30000 * edge_multiplier)  # Very strong edge penalty
         score -= edge_penalty
-        reasons.append(f"⚠️  EDGE: Limited options, avoid when possible (-{edge_penalty})")
+        reasons.append(f"⚠️  EDGE: Extremely risky in 4-player (-{edge_penalty})")
     elif near_edge and my_length > 5:
         # When we're bigger, be more careful near edges
-        near_edge_penalty = int(6000 * edge_multiplier)
+        near_edge_penalty = int(12000 * edge_multiplier)
         score -= near_edge_penalty
-        reasons.append(f"⚠️  NEAR EDGE: Getting close to boundary (-{near_edge_penalty})")
+        reasons.append(f"⚠️  NEAR EDGE: Dangerous in 4-player (-{near_edge_penalty})")
 
     # ========================================================================
     # PHASE 6: OPPONENT INTERACTION & TRAPPING
@@ -1738,16 +1807,56 @@ def evaluate_move(direction: str, game_state: dict, use_prediction: bool = True)
         reasons.append(f"🎯🎯 EXCELLENT TRAP: Opponent has {best_trap_opportunity['opponent_escapes']} escapes!")
 
     # ========================================================================
-    # PHASE 7: SPACE CONTROL & VORONOI
+    # PHASE 7: SPACE CONTROL & VORONOI - CRITICAL IN 4-PLAYER!
     # ========================================================================
 
     # Calculate Voronoi space control for all snakes
+    # In 4-player games, space control is EVERYTHING!
     voronoi_spaces = calculate_voronoi_space(game_state)
     my_id = game_state["you"]["id"]
+
     if my_id in voronoi_spaces:
         my_voronoi = voronoi_spaces[my_id]
-        score += min(my_voronoi * 50, 5000)
-        reasons.append(f"🗺️  TERRITORY: Controlling {my_voronoi} cells")
+
+        # MUCH higher bonus for space control in 4-player games
+        # Space = survival in competitive play
+        voronoi_bonus = min(my_voronoi * 200, 30000)  # Up to 30k bonus!
+        score += voronoi_bonus
+
+        # Check if we're dominating space
+        total_cells = board_width * board_height
+        space_percentage = (my_voronoi / total_cells) * 100
+
+        if space_percentage > 40:
+            # Dominating the board!
+            score += 15000
+            reasons.append(f"👑 SPACE DOMINANCE: Controlling {my_voronoi} cells ({space_percentage:.0f}%) (+{voronoi_bonus + 15000})")
+        elif space_percentage > 30:
+            # Strong position
+            score += 8000
+            reasons.append(f"🗺️  STRONG TERRITORY: {my_voronoi} cells ({space_percentage:.0f}%) (+{voronoi_bonus + 8000})")
+        elif space_percentage > 20:
+            # Decent position
+            reasons.append(f"🗺️  TERRITORY: Controlling {my_voronoi} cells (+{voronoi_bonus})")
+        else:
+            # Losing space control - WARNING!
+            score -= 5000
+            reasons.append(f"⚠️  LOW SPACE: Only {my_voronoi} cells ({space_percentage:.0f}%) - need more! (+{voronoi_bonus - 5000})")
+
+    # CONSTRICTOR MODE - When we're the largest, use our body to control space!
+    snakes_by_length = sorted(game_state["board"]["snakes"], key=lambda s: len(s["body"]), reverse=True)
+    if snakes_by_length and snakes_by_length[0]["id"] == my_id:
+        # We're the largest snake!
+        length_advantage = my_length - len(snakes_by_length[1]["body"]) if len(snakes_by_length) > 1 else 0
+
+        if length_advantage >= 3:
+            # Significant size advantage - be aggressive!
+            score += 12000
+            reasons.append(f"🐍 CONSTRICTOR MODE: Largest snake (+{length_advantage} length) - DOMINATE! (+12000)")
+        elif length_advantage >= 1:
+            # Small advantage - maintain control
+            score += 6000
+            reasons.append(f"🐍 SIZE ADVANTAGE: +{length_advantage} length - control space (+6000)")
 
     # ========================================================================
     # PHASE 8: PREDICTIVE SIMULATION (Late game only)
