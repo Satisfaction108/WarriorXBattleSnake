@@ -1188,6 +1188,86 @@ def comprehensive_trap_detection(position: dict, game_state: dict, depth: int = 
     }
 
 
+def detect_opponent_trap_opportunity(opponent_snake: dict, my_head: dict, my_length: int, game_state: dict) -> dict:
+    """
+    Detect if an opponent is in a vulnerable position that we can exploit.
+    Returns analysis of trapping opportunity.
+    """
+    opponent_head = opponent_snake["body"][0]
+    opponent_length = len(opponent_snake["body"])
+    board_width = game_state["board"]["width"]
+    board_height = game_state["board"]["height"]
+
+    # Get opponent's current trap status
+    obstacles = get_all_obstacles(game_state, include_tail=False)
+    opponent_space = flood_fill(opponent_head, board_width, board_height, obstacles)
+
+    # Count opponent's escape routes
+    opponent_escapes = 0
+    escape_positions = []
+    for test_dir in ["up", "down", "left", "right"]:
+        test_pos = {"x": opponent_head["x"], "y": opponent_head["y"]}
+        if test_dir == "up":
+            test_pos["y"] += 1
+        elif test_dir == "down":
+            test_pos["y"] -= 1
+        elif test_dir == "left":
+            test_pos["x"] -= 1
+        elif test_dir == "right":
+            test_pos["x"] += 1
+
+        if is_safe_move(test_pos, game_state, opponent_length):
+            opponent_escapes += 1
+            escape_positions.append(test_pos)
+
+    # Check if opponent is near edge/corner (more vulnerable)
+    is_edge = (opponent_head["x"] == 0 or opponent_head["x"] == board_width - 1 or
+               opponent_head["y"] == 0 or opponent_head["y"] == board_height - 1)
+    is_corner = (opponent_head["x"] == 0 or opponent_head["x"] == board_width - 1) and \
+                (opponent_head["y"] == 0 or opponent_head["y"] == board_height - 1)
+
+    # Calculate distance to opponent
+    distance = manhattan_distance(my_head, opponent_head)
+
+    # Determine if we can trap them
+    can_trap = False
+    trap_value = 0
+
+    if opponent_escapes <= 2 and distance <= 3:
+        # Opponent has limited escapes and we're close enough to cut them off
+        can_trap = True
+        trap_value = (3 - opponent_escapes) * 50000  # More valuable if fewer escapes
+
+        if is_corner:
+            trap_value += 30000  # Extra value for cornered opponent
+        elif is_edge:
+            trap_value += 15000  # Extra value for edge-trapped opponent
+
+        if opponent_space < opponent_length * 2:
+            trap_value += 40000  # They're in limited space
+
+    # Check if we can block their escape routes
+    can_block_escapes = 0
+    for escape_pos in escape_positions:
+        if manhattan_distance(my_head, escape_pos) <= 2:
+            can_block_escapes += 1
+
+    return {
+        "opponent_id": opponent_snake["id"],
+        "opponent_length": opponent_length,
+        "opponent_escapes": opponent_escapes,
+        "opponent_space": opponent_space,
+        "distance": distance,
+        "is_edge": is_edge,
+        "is_corner": is_corner,
+        "can_trap": can_trap,
+        "trap_value": trap_value,
+        "can_block_escapes": can_block_escapes,
+        "escape_positions": escape_positions,
+        "is_vulnerable": opponent_escapes <= 2 or opponent_space < opponent_length * 3
+    }
+
+
 def analyze_food_safety(food: dict, game_state: dict) -> dict:
     """
     COMPREHENSIVE food safety analysis.
@@ -1471,18 +1551,32 @@ def evaluate_move(direction: str, game_state: dict, use_prediction: bool = True)
         reasons.append(f"💀 CRITICAL HEALTH: {my_health} HP, need food urgently!")
 
     # ========================================================================
-    # PHASE 4: HEAD-TO-HEAD COLLISION HANDLING
+    # PHASE 4: HEAD-TO-HEAD COLLISION HANDLING & MUTUAL KILL LOGIC
     # ========================================================================
 
     if head_to_head_danger:
         if head_to_head_with_equal:
-            # Equal size - both die, avoid unless it's our only option
-            score -= 80000
-            reasons.append("⚠️  HEAD-TO-HEAD WITH EQUAL: Mutual destruction risk")
+            # Equal size - both die
+            # Check if we're already in a bad position (trapped or about to die)
+            # If so, taking them down with us is better than dying alone!
+            if trap_analysis["is_dangerous"] or trap_analysis["escape_routes"] <= 1:
+                # We're in trouble anyway - mutual kill is acceptable!
+                score += 50000
+                reasons.append("⚔️  MUTUAL KILL: We're trapped anyway, take them with us!")
+            else:
+                # We're in good position - avoid mutual kill
+                score -= 80000
+                reasons.append("⚠️  HEAD-TO-HEAD WITH EQUAL: Mutual destruction risk")
         else:
             # Larger opponent - we die, they live. AVOID!
-            score -= 200000
-            reasons.append("💀 HEAD-TO-HEAD WITH LARGER: We die!")
+            # UNLESS we're already doomed and can deny them the win
+            if trap_analysis["is_trapped"] or trap_analysis["escape_routes"] == 0:
+                # We're dead anyway - might as well try to take them down
+                score += 20000
+                reasons.append("⚔️  KAMIKAZE: Already doomed, attempting mutual kill!")
+            else:
+                score -= 200000
+                reasons.append("💀 HEAD-TO-HEAD WITH LARGER: We die!")
 
     # ========================================================================
     # PHASE 5: POSITIONING & TERRITORY CONTROL
@@ -1530,27 +1624,38 @@ def evaluate_move(direction: str, game_state: dict, use_prediction: bool = True)
                new_head["y"] == 0 or new_head["y"] == board_height - 1)
     is_corner = (new_head["x"] == 0 or new_head["x"] == board_width - 1) and \
                 (new_head["y"] == 0 or new_head["y"] == board_height - 1)
-    
+
     # Near edge/corner detection for better avoidance
     near_edge = (new_head["x"] <= 1 or new_head["x"] >= board_width - 2 or
                  new_head["y"] <= 1 or new_head["y"] >= board_height - 2)
 
+    # Calculate edge penalty based on game state
+    # Be more aggressive about avoiding edges when we have opponents
+    num_opponents = len([s for s in game_state["board"]["snakes"] if s["id"] != game_state["you"]["id"]])
+    edge_multiplier = 1.0 + (num_opponents * 0.5)  # More opponents = avoid edges more
+
     if is_corner:
-        score -= 30000  # Increased penalty - corners are very dangerous
-        reasons.append("⚠️  CORNER: Very limited options, high trap risk!")
+        corner_penalty = int(35000 * edge_multiplier)
+        score -= corner_penalty
+        reasons.append(f"⚠️  CORNER: Very limited options, high trap risk! (-{corner_penalty})")
     elif is_edge:
-        score -= 12000  # Increased penalty - edges restrict movement
-        reasons.append("⚠️  EDGE: Limited options, avoid when possible")
+        edge_penalty = int(15000 * edge_multiplier)
+        score -= edge_penalty
+        reasons.append(f"⚠️  EDGE: Limited options, avoid when possible (-{edge_penalty})")
     elif near_edge and my_length > 5:
         # When we're bigger, be more careful near edges
-        score -= 5000
-        reasons.append("⚠️  NEAR EDGE: Getting close to boundary")
+        near_edge_penalty = int(6000 * edge_multiplier)
+        score -= near_edge_penalty
+        reasons.append(f"⚠️  NEAR EDGE: Getting close to boundary (-{near_edge_penalty})")
 
     # ========================================================================
-    # PHASE 6: OPPONENT INTERACTION
+    # PHASE 6: OPPONENT INTERACTION & TRAPPING
     # ========================================================================
 
-    # Check for smaller snakes we can dominate
+    # Analyze each opponent for trapping opportunities
+    best_trap_opportunity = None
+    best_trap_value = 0
+
     for snake in game_state["board"]["snakes"]:
         if snake["id"] == game_state["you"]["id"]:
             continue
@@ -1559,6 +1664,51 @@ def evaluate_move(direction: str, game_state: dict, use_prediction: bool = True)
         snake_length = len(snake["body"])
         dist_to_opponent = manhattan_distance(new_head, snake_head)
 
+        # Detect trapping opportunity
+        trap_analysis = detect_opponent_trap_opportunity(snake, new_head, my_length, game_state)
+
+        # Debug: Log trap analysis for first move only
+        # print(f"DEBUG {direction}: Opponent at {snake_head}, escapes={trap_analysis['opponent_escapes']}, can_trap={trap_analysis['can_trap']}, dist={dist_to_opponent}, vulnerable={trap_analysis['is_vulnerable']}")
+
+        # Check if this move helps trap the opponent
+        if trap_analysis["can_trap"]:
+            # Calculate how much this move cuts off opponent's escapes
+            cutoff_value = 0
+
+            # If opponent has escape routes, reward blocking them
+            if len(trap_analysis["escape_positions"]) > 0:
+                for escape_pos in trap_analysis["escape_positions"]:
+                    # Check if our new position blocks or threatens this escape
+                    dist_to_escape = manhattan_distance(new_head, escape_pos)
+                    if dist_to_escape == 1:
+                        # We're adjacent to their escape route - blocking it!
+                        cutoff_value += 60000
+                    elif dist_to_escape == 2:
+                        # We're close to their escape route - threatening it
+                        cutoff_value += 25000
+            else:
+                # Opponent is already trapped (0 escapes)!
+                # Reward being close to finish them off
+                if dist_to_opponent == 1:
+                    cutoff_value += 80000  # Adjacent to trapped opponent - go for the kill!
+                elif dist_to_opponent == 2:
+                    cutoff_value += 40000  # Close to trapped opponent
+
+            total_trap_value = trap_analysis["trap_value"] + cutoff_value
+
+            if total_trap_value > best_trap_value:
+                best_trap_value = total_trap_value
+                best_trap_opportunity = trap_analysis
+
+            if cutoff_value > 0:
+                if trap_analysis["opponent_escapes"] == 0:
+                    score += cutoff_value
+                    reasons.append(f"🎯🎯 OPPONENT TRAPPED: Finishing them off! (+{cutoff_value})")
+                else:
+                    score += cutoff_value
+                    reasons.append(f"🎯 TRAPPING OPPONENT: Cutting off {trap_analysis['opponent_escapes']} escapes (+{cutoff_value})")
+
+        # Standard opponent interaction
         if snake_length < my_length:
             # We're bigger - we can be aggressive
             if dist_to_opponent == 1:
@@ -1569,12 +1719,23 @@ def evaluate_move(direction: str, game_state: dict, use_prediction: bool = True)
                 # Near smaller snake - good positioning
                 score += 5000
                 reasons.append(f"⚔️  HUNTING: Near smaller snake")
+
+                # If they're vulnerable, be more aggressive
+                if trap_analysis["is_vulnerable"]:
+                    score += 15000
+                    reasons.append(f"🎯 VULNERABLE TARGET: {trap_analysis['opponent_escapes']} escapes")
+
         elif snake_length >= my_length:
             # Equal or larger - be cautious
             if dist_to_opponent <= 2:
                 # Too close to dangerous snake
                 score -= 10000
                 reasons.append(f"⚠️  DANGER: Too close to larger/equal snake (len {snake_length})")
+
+    # Give extra bonus if we found a great trapping opportunity
+    if best_trap_opportunity and best_trap_value > 50000:
+        score += 40000
+        reasons.append(f"🎯🎯 EXCELLENT TRAP: Opponent has {best_trap_opportunity['opponent_escapes']} escapes!")
 
     # ========================================================================
     # PHASE 7: SPACE CONTROL & VORONOI
@@ -1817,7 +1978,8 @@ def move(game_state: typing.Dict) -> typing.Dict:
     print(f"{'='*60}")
     print(f"\nMove Evaluations:")
     for eval in move_evaluations:
-        reasons_str = ', '.join(eval['reasons'][:3]) if eval['reasons'] else "No reasons"
+        # Show more reasons to see trapping logic
+        reasons_str = ', '.join(eval['reasons'][:5]) if eval['reasons'] else "No reasons"
         print(f"  {eval['direction']:>5}: {eval['score']:>6} - {reasons_str}")
     print(f"\n>>> CHOSEN: {best_move['direction'].upper()} (score: {best_move['score']})")
 
