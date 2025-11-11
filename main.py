@@ -373,9 +373,9 @@ def info() -> typing.Dict:
     return {
         "apiversion": "1",
         "author": "WarriorX",
-        "color": "#1a1a1a",  # PURE BLACK - Ultimate menace and fear
-        "head": "dead",      # SKULL HEAD - Death incarnate 💀
-        "tail": "bolt",      # LIGHTNING BOLT - Unstoppable power ⚡
+        "color": "#FF6600",      # TIGER ORANGE - Bold and fierce 🐯
+        "head": "tiger-king",    # TIGER KING HEAD - Majestic predator 👑�
+        "tail": "tiger-tail",    # TIGER TAIL - Powerful and sleek 🐅
     }
 
 
