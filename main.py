@@ -1106,6 +1106,74 @@ def minimax_alpha_beta(game_state: dict, my_id: str, depth: int, alpha: float, b
         return minimax_alpha_beta(game_state, my_id, depth - 1, alpha, beta, True, my_move)
 
 
+def simulate_future_turns(start_pos: dict, game_state: dict, num_turns: int = 3) -> dict:
+    """
+    Simulate the next N turns to see if this move leads to inevitable death.
+    Returns analysis of future danger.
+
+    This catches scenarios where a move seems safe NOW but leads to a trap in 2-3 turns.
+    """
+    board_width = game_state["board"]["width"]
+    board_height = game_state["board"]["height"]
+    my_length = len(game_state["you"]["body"])
+
+    # Simulate each future turn
+    current_pos = start_pos
+    min_future_escapes = 4  # Track the minimum escape routes we'll have
+    future_trap_detected = False
+    trap_turn = -1
+
+    for turn in range(1, num_turns + 1):
+        # Get obstacles for this future turn (bodies will have moved)
+        obstacles = get_all_obstacles(game_state, include_tail=False)
+
+        # Count escape routes from this future position
+        escape_count = 0
+        best_next_pos = None
+
+        for test_dir in ["up", "down", "left", "right"]:
+            test_pos = {"x": current_pos["x"], "y": current_pos["y"]}
+            if test_dir == "up":
+                test_pos["y"] += 1
+            elif test_dir == "down":
+                test_pos["y"] -= 1
+            elif test_dir == "left":
+                test_pos["x"] -= 1
+            elif test_dir == "right":
+                test_pos["x"] += 1
+
+            # Check if this future move is valid
+            if (0 <= test_pos["x"] < board_width and
+                0 <= test_pos["y"] < board_height and
+                (test_pos["x"], test_pos["y"]) not in obstacles):
+                escape_count += 1
+                if best_next_pos is None:
+                    best_next_pos = test_pos
+
+        # Track minimum escapes
+        if escape_count < min_future_escapes:
+            min_future_escapes = escape_count
+
+        # Check if we're trapped in the future
+        if escape_count == 0:
+            future_trap_detected = True
+            trap_turn = turn
+            break
+
+        # Move to best next position for next iteration
+        if best_next_pos:
+            current_pos = best_next_pos
+        else:
+            break
+
+    return {
+        "future_trap_detected": future_trap_detected,
+        "trap_turn": trap_turn,
+        "min_future_escapes": min_future_escapes,
+        "is_future_dangerous": min_future_escapes <= 1
+    }
+
+
 def comprehensive_trap_detection(position: dict, game_state: dict, depth: int = 4) -> dict:
     """
     COMPREHENSIVE trap detection using multiple algorithms.
@@ -1463,6 +1531,29 @@ def evaluate_move(direction: str, game_state: dict, use_prediction: bool = True)
         reasons.append(f"💀 GUARANTEED TRAP: {trap_analysis['escape_routes']} escapes, {trap_analysis['available_space']} space")
         return {"score": score, "reasons": reasons, "direction": direction}
 
+    # NEW: Multi-turn lookahead to catch future traps!
+    # This prevents scenarios where we walk into a trap 2-3 turns later
+    future_analysis = simulate_future_turns(new_head, game_state, num_turns=3)
+
+    if future_analysis["future_trap_detected"]:
+        # This move leads to INEVITABLE DEATH in the future!
+        future_trap_penalty = 400000
+        score -= future_trap_penalty
+        reasons.append(f"💀 FUTURE TRAP: Death in {future_analysis['trap_turn']} turns! (-{future_trap_penalty})")
+        # Don't return yet - might still be best option if all moves are bad
+
+    elif future_analysis["is_future_dangerous"]:
+        # This move leads to dangerous position in future (1 escape or less)
+        future_danger_penalty = 150000
+        score -= future_danger_penalty
+        reasons.append(f"⚠️  FUTURE DANGER: Only {future_analysis['min_future_escapes']} escapes ahead (-{future_danger_penalty})")
+
+    elif future_analysis["min_future_escapes"] >= 3:
+        # This move maintains good escape routes in the future!
+        future_safety_bonus = 20000
+        score += future_safety_bonus
+        reasons.append(f"✅ FUTURE SAFE: {future_analysis['min_future_escapes']}+ escapes ahead (+{future_safety_bonus})")
+
     # Penalize dangerous situations more heavily
     if trap_analysis["is_dangerous"]:
         # Scale penalty based on how dangerous it is
@@ -1479,7 +1570,7 @@ def evaluate_move(direction: str, game_state: dict, use_prediction: bool = True)
         # Two escapes is okay but not ideal
         score += 5000
         reasons.append(f"✓ ADEQUATE: {trap_analysis['escape_routes']} escape routes")
-    
+
     # Extra reward for having lots of available space
     if trap_analysis["available_space"] >= my_length * 3:
         score += 10000
@@ -1511,6 +1602,23 @@ def evaluate_move(direction: str, game_state: dict, use_prediction: bool = True)
 
                 # Analyze if eating this food is safe
                 food_safety = analyze_food_safety(food, game_state)
+
+                # CRITICAL: Check if we're eating food on an EDGE!
+                # This is EXTREMELY dangerous - user's Turn 53 scenario
+                is_edge = (new_head["x"] == 0 or new_head["x"] == board_width - 1 or
+                          new_head["y"] == 0 or new_head["y"] == board_height - 1)
+                is_corner = (new_head["x"] == 0 or new_head["x"] == board_width - 1) and \
+                           (new_head["y"] == 0 or new_head["y"] == board_height - 1)
+
+                if is_corner and urgency < 10:
+                    # Eating food in a CORNER is almost always death!
+                    score -= 300000
+                    reasons.append(f"🚫 CORNER FOOD TRAP: Eating here = death! (-300000)")
+                elif is_edge and urgency < 8:
+                    # Eating food on an EDGE is very dangerous
+                    edge_food_penalty = 150000
+                    score -= edge_food_penalty
+                    reasons.append(f"⚠️  EDGE FOOD DANGER: Eating on edge = trap risk! (-{edge_food_penalty})")
 
                 if food_safety["is_deadly"]:
                     # Food is in a death trap!
