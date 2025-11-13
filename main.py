@@ -1848,6 +1848,7 @@ def evaluate_move(direction: str, game_state: dict, use_prediction: bool = True)
     # Analyze each opponent for trapping opportunities
     best_trap_opportunity = None
     best_trap_value = 0
+    dangerous_neighbors = 0  # Count nearby equal/larger heads for encirclement risk
 
     for snake in game_state["board"]["snakes"]:
         if snake["id"] == game_state["you"]["id"]:
@@ -1859,9 +1860,6 @@ def evaluate_move(direction: str, game_state: dict, use_prediction: bool = True)
 
         # Detect trapping opportunity
         trap_analysis = detect_opponent_trap_opportunity(snake, new_head, my_length, game_state)
-
-        # Debug: Log trap analysis for first move only
-        # print(f"DEBUG {direction}: Opponent at {snake_head}, escapes={trap_analysis['opponent_escapes']}, can_trap={trap_analysis['can_trap']}, dist={dist_to_opponent}, vulnerable={trap_analysis['is_vulnerable']}")
 
         # Check if this move helps trap the opponent
         if trap_analysis["can_trap"]:
@@ -1920,10 +1918,24 @@ def evaluate_move(direction: str, game_state: dict, use_prediction: bool = True)
 
         elif snake_length >= my_length:
             # Equal or larger - be cautious
-            if dist_to_opponent <= 2:
+            if dist_to_opponent == 1:
+                danger_penalty = 25000
+            elif dist_to_opponent == 2:
+                danger_penalty = 15000
+            else:
+                danger_penalty = 0
+
+            if danger_penalty > 0:
                 # Too close to dangerous snake
-                score -= 10000
-                reasons.append(f"⚠️  DANGER: Too close to larger/equal snake (len {snake_length})")
+                score -= danger_penalty
+                dangerous_neighbors += 1
+                reasons.append(f"⚠️  DANGER: {dist_to_opponent} away from larger/equal snake (len {snake_length}) (-{danger_penalty})")
+
+    # Extra penalty when multiple dangerous heads are nearby (multi-snake trap risk)
+    if dangerous_neighbors >= 2:
+        multi_danger_penalty = 20000 * dangerous_neighbors
+        score -= multi_danger_penalty
+        reasons.append(f"💀 MULTI-SNAKE PRESSURE: {dangerous_neighbors} larger/equal heads nearby (-{multi_danger_penalty})")
 
     # Give extra bonus if we found a great trapping opportunity
     if best_trap_opportunity and best_trap_value > 50000:
