@@ -1695,12 +1695,18 @@ def evaluate_move(direction: str, game_state: dict, use_prediction: bool = True)
                     score += path_bonus
                     reasons.append(f"🍎 FOOD NEARBY: {len(path)} moves, risky (+{path_bonus})")
             else:
-                # Not on optimal path, but give bonus for getting closer
+                # Not on optimal path, adjust based on distance change
                 current_dist = manhattan_distance(my_head, food)
                 new_dist = manhattan_distance(new_head, food)
                 if new_dist < current_dist:
+                    # Moving closer to best food
                     score += 50000 + (urgency * 6000)
                     reasons.append(f"🍎 MOVING TOWARD FOOD: {new_dist} away")
+                elif new_dist > current_dist and urgency >= 5:
+                    # Moving away from best food while somewhat hungry - penalize
+                    drift_penalty = 20000 + (urgency * 7000)
+                    score -= drift_penalty
+                    reasons.append(f"⚠️  DRIFTING FROM FOOD: {new_dist} away, urgency {urgency} (-{drift_penalty})")
 
     # CRITICAL: If health is critical and we're not eating/seeking, HUGE penalty
     if urgency >= 8 and not eating_food:
@@ -1806,24 +1812,34 @@ def evaluate_move(direction: str, game_state: dict, use_prediction: bool = True)
                  new_head["y"] <= 1 or new_head["y"] >= board_height - 2)
 
     # Calculate edge penalty based on game state
-    # OPTIMIZED FOR 4-PLAYER GAMES (always 3 opponents)
-    # Edges are EXTREMELY dangerous with 3 opponents competing for space!
-    num_opponents = 3  # Always 3 opponents in 4-player games
-    edge_multiplier = 2.5  # Much stronger edge avoidance for 4-player
+    # Dynamically scale edge fear based on opponents, length, and health
+    num_opponents = len([s for s in game_state["board"]["snakes"] if s["id"] != game_state["you"]["id"]])
+
+    # Base: more opponents = more dangerous edges (1.5–2.4 range for 0–3 opponents)
+    base_edge_multiplier = 1.5 + 0.3 * min(num_opponents, 3)
+
+    # Smaller snakes are more agile and can escape edges more easily
+    length_factor = 0.7 if my_length <= 6 else 1.0
+
+    edge_multiplier = base_edge_multiplier * length_factor
+
+    # If health is critical (urgency high), don't over-penalize edges that lead to food/survival
+    if urgency >= 8:
+        edge_multiplier *= 0.6
 
     if is_corner:
         corner_penalty = int(60000 * edge_multiplier)  # MASSIVE penalty for corners
         score -= corner_penalty
-        reasons.append(f"🚫 CORNER: DEATH TRAP in 4-player! (-{corner_penalty})")
+        reasons.append(f"🚫 CORNER: Very dangerous in multi-snake games (-{corner_penalty})")
     elif is_edge:
-        edge_penalty = int(30000 * edge_multiplier)  # Very strong edge penalty
+        edge_penalty = int(30000 * edge_multiplier)  # Strong edge penalty
         score -= edge_penalty
-        reasons.append(f"⚠️  EDGE: Extremely risky in 4-player (-{edge_penalty})")
+        reasons.append(f"⚠️  EDGE: Risky near wall with opponents (-{edge_penalty})")
     elif near_edge and my_length > 5:
         # When we're bigger, be more careful near edges
         near_edge_penalty = int(12000 * edge_multiplier)
         score -= near_edge_penalty
-        reasons.append(f"⚠️  NEAR EDGE: Dangerous in 4-player (-{near_edge_penalty})")
+        reasons.append(f"⚠️  NEAR EDGE: Reduced flexibility near wall (-{near_edge_penalty})")
 
     # ========================================================================
     # PHASE 6: OPPONENT INTERACTION & TRAPPING
@@ -2013,6 +2029,448 @@ def evaluate_move(direction: str, game_state: dict, use_prediction: bool = True)
     return {"score": score, "reasons": reasons, "direction": direction}
 
 
+# ============================================================================
+# CONSTRICTOR MODE - SPECIALIZED FUNCTIONS
+# ============================================================================
+# In constrictor mode: NO FOOD, always growing, can't revisit cells
+# Strategy: Maximize space, avoid self-collision, cut off opponents
+
+def is_constrictor_mode(game_state: dict) -> bool:
+    """
+    Detect if this is constrictor mode.
+    In constrictor mode: no food on board, snakes grow every turn.
+    """
+    # Check if there's no food
+    has_no_food = len(game_state["board"].get("food", [])) == 0
+
+    # In constrictor mode, snakes grow every turn
+    # We can detect this by checking if health is always 100 (doesn't decrease)
+    my_health = game_state["you"]["health"]
+    is_full_health = my_health == 100
+
+    return has_no_food and is_full_health
+
+
+def calculate_reachable_space_constrictor(pos: dict, game_state: dict, max_depth: int = 100) -> dict:
+    """
+    Calculate how much space is reachable from a position in constrictor mode.
+    Returns detailed analysis of the reachable area.
+    """
+    board_width = game_state["board"]["width"]
+    board_height = game_state["board"]["height"]
+
+    # Get all occupied cells (all snake bodies)
+    occupied = set()
+    for snake in game_state["board"]["snakes"]:
+        for segment in snake["body"]:
+            occupied.add((segment["x"], segment["y"]))
+
+    # BFS to find all reachable cells
+    visited = set()
+    queue = deque([pos])
+    visited.add((pos["x"], pos["y"]))
+
+    cells_explored = 0
+    max_distance = 0
+
+    while queue and cells_explored < max_depth:
+        current = queue.popleft()
+        cells_explored += 1
+
+        # Check all neighbors
+        for dx, dy in [(0, 1), (0, -1), (1, 0), (-1, 0)]:
+            nx, ny = current["x"] + dx, current["y"] + dy
+
+            # Check bounds
+            if not (0 <= nx < board_width and 0 <= ny < board_height):
+                continue
+
+            # Check if already visited or occupied
+            if (nx, ny) in visited or (nx, ny) in occupied:
+                continue
+
+            visited.add((nx, ny))
+            queue.append({"x": nx, "y": ny})
+            max_distance = max(max_distance, abs(nx - pos["x"]) + abs(ny - pos["y"]))
+
+    return {
+        "reachable_cells": len(visited),
+        "max_distance": max_distance,
+        "is_isolated": len(visited) < 10,  # Less than 10 cells = isolated
+        "cells": visited
+    }
+
+
+def detect_self_trap_constrictor(new_head: dict, game_state: dict, lookahead: int = 5) -> dict:
+    """
+    Detect if moving to new_head will trap us in constrictor mode.
+    In constrictor mode, we grow every turn, so we need MORE space than standard mode.
+    """
+    my_length = len(game_state["you"]["body"])
+
+    # Calculate space after this move
+    space_analysis = calculate_reachable_space_constrictor(new_head, game_state)
+    reachable = space_analysis["reachable_cells"]
+
+    # In constrictor mode, we need space for our GROWING body
+    # We grow 1 cell per turn, so we need at least (current_length + lookahead) cells
+    min_required_space = my_length + lookahead
+
+    is_trapped = reachable < min_required_space
+    is_dangerous = reachable < min_required_space * 1.5
+
+    return {
+        "is_trapped": is_trapped,
+        "is_dangerous": is_dangerous,
+        "reachable_space": reachable,
+        "required_space": min_required_space,
+        "space_margin": reachable - min_required_space,
+        "is_isolated": space_analysis["is_isolated"]
+    }
+
+
+def calculate_opponent_cutoff_value_constrictor(my_pos: dict, opponent: dict, game_state: dict) -> dict:
+    """
+    Calculate the value of cutting off an opponent's space in constrictor mode.
+    This is CRITICAL - if we can trap them in a small space, they'll die!
+    """
+    opponent_head = opponent["body"][0]
+    opponent_length = len(opponent["body"])
+
+    # Calculate opponent's reachable space
+    opponent_space = calculate_reachable_space_constrictor(opponent_head, game_state)
+    opponent_reachable = opponent_space["reachable_cells"]
+
+    # Calculate our reachable space
+    my_space = calculate_reachable_space_constrictor(my_pos, game_state)
+    my_reachable = my_space["reachable_cells"]
+
+    # Check if we can cut them off
+    cutoff_value = 0
+    can_cutoff = False
+
+    # If opponent has limited space relative to their length
+    if opponent_reachable < opponent_length * 2:
+        # They're in trouble!
+        can_cutoff = True
+        cutoff_value = 200000 + (opponent_length * 2 - opponent_reachable) * 10000
+
+    # If we have significantly more space than them
+    space_advantage = my_reachable - opponent_reachable
+    if space_advantage > 20:
+        cutoff_value += space_advantage * 1000
+
+    # Check if we're blocking their path to larger spaces
+    dist_to_opponent = manhattan_distance(my_pos, opponent_head)
+    if dist_to_opponent <= 3 and my_reachable > opponent_reachable:
+        # We're between them and freedom!
+        cutoff_value += 100000
+        can_cutoff = True
+
+    return {
+        "can_cutoff": can_cutoff,
+        "cutoff_value": cutoff_value,
+        "opponent_space": opponent_reachable,
+        "my_space": my_reachable,
+        "space_advantage": space_advantage,
+        "opponent_is_trapped": opponent_reachable < opponent_length * 1.5
+    }
+
+
+def find_center_control_value(pos: dict, board_width: int, board_height: int) -> int:
+    """
+    Calculate value of controlling the center in constrictor mode.
+    Center control is CRITICAL - it gives maximum options.
+    """
+    center_x = board_width / 2.0
+    center_y = board_height / 2.0
+
+    # Distance from center
+    dist_from_center = abs(pos["x"] - center_x) + abs(pos["y"] - center_y)
+    max_dist = center_x + center_y
+
+    # Closer to center = higher value
+    center_score = int((1.0 - (dist_from_center / max_dist)) * 100000)
+
+    return center_score
+
+
+def predict_opponent_moves_constrictor(opponent: dict, game_state: dict) -> list:
+    """
+    Predict where an opponent is likely to move in constrictor mode.
+    Returns list of likely positions.
+    """
+    opponent_head = opponent["body"][0]
+    board_width = game_state["board"]["width"]
+    board_height = game_state["board"]["height"]
+
+    # Get all occupied cells
+    occupied = set()
+    for snake in game_state["board"]["snakes"]:
+        for segment in snake["body"]:
+            occupied.add((segment["x"], segment["y"]))
+
+    # Evaluate each possible opponent move
+    possible_positions = []
+
+    for dx, dy in [(0, 1), (0, -1), (1, 0), (-1, 0)]:
+        new_x = opponent_head["x"] + dx
+        new_y = opponent_head["y"] + dy
+
+        # Check bounds
+        if not (0 <= new_x < board_width and 0 <= new_y < board_height):
+            continue
+
+        # Check if occupied
+        if (new_x, new_y) in occupied:
+            continue
+
+        # This is a valid move for the opponent
+        new_pos = {"x": new_x, "y": new_y}
+
+        # Calculate how good this move is for the opponent
+        space_analysis = calculate_reachable_space_constrictor(new_pos, game_state, max_depth=30)
+
+        possible_positions.append({
+            "pos": new_pos,
+            "space": space_analysis["reachable_cells"],
+            "priority": space_analysis["reachable_cells"]  # Opponents will prefer moves with more space
+        })
+
+    # Sort by priority (most space first)
+    possible_positions.sort(key=lambda x: x["priority"], reverse=True)
+
+    return possible_positions
+
+
+def calculate_blocking_value_constrictor(my_pos: dict, opponent: dict, game_state: dict) -> int:
+    """
+    Calculate the value of blocking an opponent's best moves.
+    Returns bonus points for moves that cut off opponent's options.
+    """
+    # Predict where opponent wants to go
+    opponent_moves = predict_opponent_moves_constrictor(opponent, game_state)
+
+    if not opponent_moves:
+        return 0  # Opponent has no moves (already dead)
+
+    blocking_value = 0
+
+    # Check if we're blocking their best moves
+    for i, opp_move in enumerate(opponent_moves[:3]):  # Check top 3 opponent moves
+        opp_pos = opp_move["pos"]
+        dist = manhattan_distance(my_pos, opp_pos)
+
+        if dist == 0:
+            # We're moving to their best position!
+            blocking_value += 150000 - (i * 30000)  # More value for blocking their #1 choice
+        elif dist == 1:
+            # We're adjacent to their best position - threatening it
+            blocking_value += 80000 - (i * 20000)
+        elif dist == 2:
+            # We're close to their best position
+            blocking_value += 40000 - (i * 10000)
+
+    return blocking_value
+
+
+def evaluate_move_constrictor(direction: str, game_state: dict) -> dict:
+    """
+    CONSTRICTOR MODE EVALUATION - Completely different strategy!
+
+    In constrictor mode:
+    - NO FOOD (ignore all food logic)
+    - Always growing (every move adds a segment)
+    - Can't revisit cells (they're "painted")
+    - Space management is EVERYTHING
+    - Self-collision is the main danger
+
+    Strategy:
+    1. Maximize reachable space
+    2. Avoid self-trapping
+    3. Cut off opponents
+    4. Control center
+    5. Create efficient patterns
+    """
+    my_head = game_state["you"]["body"][0]
+    my_body = game_state["you"]["body"]
+    my_length = len(my_body)
+    board_width = game_state["board"]["width"]
+    board_height = game_state["board"]["height"]
+
+    # Calculate new head position
+    new_head = {"x": my_head["x"], "y": my_head["y"]}
+    if direction == "up":
+        new_head["y"] += 1
+    elif direction == "down":
+        new_head["y"] -= 1
+    elif direction == "left":
+        new_head["x"] -= 1
+    elif direction == "right":
+        new_head["x"] += 1
+
+    score = 0
+    reasons = []
+
+    # ========================================================================
+    # PHASE 1: IMMEDIATE SURVIVAL - CRITICAL!
+    # ========================================================================
+
+    # Check 1: Wall collision
+    if new_head["x"] < 0 or new_head["x"] >= board_width or new_head["y"] < 0 or new_head["y"] >= board_height:
+        return {"score": -10000000, "reasons": ["💀 WALL COLLISION"], "direction": direction}
+
+    # Check 2: Self collision (CRITICAL in constrictor mode!)
+    # In constrictor mode, we DON'T exclude the tail because we're always growing!
+    for segment in my_body:  # Check ALL segments including tail!
+        if coords_equal(new_head, segment):
+            return {"score": -10000000, "reasons": ["💀 SELF COLLISION - CONSTRICTOR MODE"], "direction": direction}
+
+    # Check 3: Opponent body collision
+    for snake in game_state["board"]["snakes"]:
+        if snake["id"] == game_state["you"]["id"]:
+            continue
+        for segment in snake["body"]:
+            if coords_equal(new_head, segment):
+                return {"score": -10000000, "reasons": ["💀 OPPONENT BODY COLLISION"], "direction": direction}
+
+    # Check 4: Head-to-head collision in constrictor mode
+    # In constrictor mode, we need to avoid head-to-head with equal/longer snakes
+    for snake in game_state["board"]["snakes"]:
+        if snake["id"] == game_state["you"]["id"]:
+            continue
+
+        opponent_head = snake["body"][0]
+        opponent_length = len(snake["body"])
+
+        # Check if opponent could move to the same position
+        dist_to_opponent_head = manhattan_distance(new_head, opponent_head)
+        if dist_to_opponent_head == 1:
+            # We're moving adjacent to opponent's head - possible head-to-head!
+            if opponent_length >= my_length:
+                # They're equal or longer - we lose or tie (both die)
+                # CRITICAL: Avoid this!
+                return {"score": -10000000, "reasons": [f"💀 HEAD-TO-HEAD: Opponent is equal/longer ({opponent_length} vs {my_length})"], "direction": direction}
+
+    reasons.append("✅ IMMEDIATE SURVIVAL: Safe from instant death")
+
+    # ========================================================================
+    # PHASE 2: SPACE ANALYSIS - MOST CRITICAL IN CONSTRICTOR MODE!
+    # ========================================================================
+
+    # Detect if this move will trap us
+    trap_analysis = detect_self_trap_constrictor(new_head, game_state, lookahead=10)
+
+    if trap_analysis["is_trapped"]:
+        # This move will trap us - REJECT!
+        score -= 5000000
+        reasons.append(f"💀 SELF-TRAP: Only {trap_analysis['reachable_space']} cells, need {trap_analysis['required_space']}!")
+        return {"score": score, "reasons": reasons, "direction": direction}
+
+    if trap_analysis["is_dangerous"]:
+        # Risky move - limited space
+        danger_penalty = 2000000
+        score -= danger_penalty
+        reasons.append(f"⚠️  DANGEROUS SPACE: Only {trap_analysis['reachable_space']} cells available (-{danger_penalty})")
+    else:
+        # Good space!
+        space_bonus = min(trap_analysis["reachable_space"] * 5000, 500000)
+        score += space_bonus
+        reasons.append(f"🌊 GOOD SPACE: {trap_analysis['reachable_space']} cells reachable (+{space_bonus})")
+
+    # Bonus for space margin (how much extra space we have)
+    if trap_analysis["space_margin"] > 20:
+        margin_bonus = min(trap_analysis["space_margin"] * 2000, 200000)
+        score += margin_bonus
+        reasons.append(f"✅ SPACE MARGIN: +{trap_analysis['space_margin']} extra cells (+{margin_bonus})")
+
+    # ========================================================================
+    # PHASE 3: OPPONENT CUTOFF & PREDICTIVE BLOCKING - KILL THEM!
+    # ========================================================================
+
+    opponents = [s for s in game_state["board"]["snakes"] if s["id"] != game_state["you"]["id"]]
+
+    total_cutoff_value = 0
+    total_blocking_value = 0
+
+    for opponent in opponents:
+        # Calculate cutoff value (trapping them in small space)
+        cutoff_analysis = calculate_opponent_cutoff_value_constrictor(new_head, opponent, game_state)
+
+        if cutoff_analysis["can_cutoff"]:
+            score += cutoff_analysis["cutoff_value"]
+            total_cutoff_value += cutoff_analysis["cutoff_value"]
+
+            if cutoff_analysis["opponent_is_trapped"]:
+                reasons.append(f"🎯🎯 OPPONENT TRAPPED: {cutoff_analysis['opponent_space']} cells! (+{cutoff_analysis['cutoff_value']})")
+            else:
+                reasons.append(f"✂️  CUTTING OFF OPPONENT: Space advantage {cutoff_analysis['space_advantage']} (+{cutoff_analysis['cutoff_value']})")
+
+        # Calculate predictive blocking value (blocking their best moves)
+        blocking_value = calculate_blocking_value_constrictor(new_head, opponent, game_state)
+        if blocking_value > 0:
+            score += blocking_value
+            total_blocking_value += blocking_value
+            reasons.append(f"🚧 BLOCKING OPPONENT: Cutting off their best moves (+{blocking_value})")
+
+    # ========================================================================
+    # PHASE 4: CENTER CONTROL - MAXIMIZE OPTIONS
+    # ========================================================================
+
+    center_value = find_center_control_value(new_head, board_width, board_height)
+    score += center_value
+
+    if center_value > 70000:
+        reasons.append(f"👑 CENTER CONTROL: Dominating center (+{center_value})")
+    elif center_value > 40000:
+        reasons.append(f"📍 GOOD POSITION: Near center (+{center_value})")
+
+    # ========================================================================
+    # PHASE 5: AVOID EDGES - EDGES ARE DEATH IN CONSTRICTOR MODE!
+    # ========================================================================
+
+    is_edge = (new_head["x"] == 0 or new_head["x"] == board_width - 1 or
+               new_head["y"] == 0 or new_head["y"] == board_height - 1)
+    is_corner = (new_head["x"] == 0 or new_head["x"] == board_width - 1) and \
+                (new_head["y"] == 0 or new_head["y"] == board_height - 1)
+
+    if is_corner:
+        corner_penalty = 800000
+        score -= corner_penalty
+        reasons.append(f"🚫 CORNER: DEATH TRAP in constrictor! (-{corner_penalty})")
+    elif is_edge:
+        edge_penalty = 400000
+        score -= edge_penalty
+        reasons.append(f"⚠️  EDGE: Very dangerous in constrictor (-{edge_penalty})")
+
+    # ========================================================================
+    # PHASE 6: SPACE EFFICIENCY - PREFER MOVES THAT DON'T WASTE SPACE
+    # ========================================================================
+
+    # Count how many adjacent cells are already occupied
+    adjacent_occupied = 0
+    for dx, dy in [(0, 1), (0, -1), (1, 0), (-1, 0)]:
+        check_x, check_y = new_head["x"] + dx, new_head["y"] + dy
+        if not (0 <= check_x < board_width and 0 <= check_y < board_height):
+            continue
+
+        # Check if this cell is occupied by any snake
+        for snake in game_state["board"]["snakes"]:
+            for segment in snake["body"]:
+                if segment["x"] == check_x and segment["y"] == check_y:
+                    adjacent_occupied += 1
+                    break
+
+    # Prefer moves that don't create isolated pockets
+    if adjacent_occupied >= 3:
+        # This move creates a dead-end or pocket - BAD!
+        pocket_penalty = 300000
+        score -= pocket_penalty
+        reasons.append(f"⚠️  CREATING POCKET: {adjacent_occupied} sides blocked (-{pocket_penalty})")
+
+    return {"score": score, "reasons": reasons, "direction": direction}
+
+
 # Global variable to track recent moves (for anti-pattern detection)
 recent_moves = []
 
@@ -2039,9 +2497,20 @@ def move(game_state: typing.Dict) -> typing.Dict:
 
     turn = game_state["turn"]
 
+    # ========================================================================
+    # DETECT GAME MODE - CONSTRICTOR VS STANDARD
+    # ========================================================================
+
+    constrictor_mode = is_constrictor_mode(game_state)
+
     print(f"\n{'='*80}")
-    print(f"🧠 WARRIORX BATTLESNAKE - TURN {turn}")
-    print(f"{'='*80}")
+    if constrictor_mode:
+        print(f"🐍 WARRIORX CONSTRICTOR MODE - TURN {turn}")
+        print(f"{'='*80}")
+        print(f"⚡ CONSTRICTOR RULES: No food, always growing, can't revisit cells!")
+    else:
+        print(f"🧠 WARRIORX BATTLESNAKE - TURN {turn}")
+        print(f"{'='*80}")
     print(f"📍 Position: ({my_head['x']}, {my_head['y']}) | Health: {my_health} | Length: {my_length}")
     print(f"🎮 Opponents: {num_opponents} | Board: {board_width}x{board_height}")
 
@@ -2050,9 +2519,13 @@ def move(game_state: typing.Dict) -> typing.Dict:
     print(f"🎯 Valid moves from get_possible_moves(): {possible_moves}")
 
     if not possible_moves:
-        # No valid moves - try anything as last resort
-        possible_moves = ["up", "down", "left", "right"]
-        print("⚠️  WARNING: No valid moves found! Trying all directions as last resort.")
+        # CRITICAL: No valid moves means we're completely trapped!
+        # Don't try wall moves - just pick the "least bad" option
+        print("🚨 CRITICAL: No valid moves found! Snake is completely trapped!")
+        print("   This means all 4 directions are either walls or backwards.")
+        print("   Choosing a random direction as last resort (will likely die).")
+        import random
+        possible_moves = [random.choice(["up", "down", "left", "right"])]
 
     # Log current position details
     print(f"\n📊 Current State:")
@@ -2073,17 +2546,27 @@ def move(game_state: typing.Dict) -> typing.Dict:
     # The comprehensive minimax is too slow for 500ms timeout
     # Using the faster evaluate_move() function instead
 
-    print(f"\n🔍 FAST MOVE EVALUATION")
-    print(f"   Using optimized evaluation for sub-500ms response time...")
-    print(f"{'='*80}")
+    if constrictor_mode:
+        print(f"\n🐍 CONSTRICTOR MODE EVALUATION")
+        print(f"   Strategy: Maximize space, avoid self-trap, cut off opponents!")
+        print(f"{'='*80}")
+    else:
+        print(f"\n🔍 FAST MOVE EVALUATION")
+        print(f"   Using optimized evaluation for sub-500ms response time...")
+        print(f"{'='*80}")
 
     # Evaluate all possible moves with prediction
     move_evaluations = []
     for direction in possible_moves:
-        evaluation = evaluate_move(direction, game_state, use_prediction=True)
+        # Use constrictor evaluation if in constrictor mode
+        if constrictor_mode:
+            evaluation = evaluate_move_constrictor(direction, game_state)
+        else:
+            evaluation = evaluate_move(direction, game_state, use_prediction=True)
 
         # ANTI-PATTERN: Penalize repeating the same direction too many times
-        if len(recent_moves) >= 3:
+        # (Less important in constrictor mode since we can't revisit cells anyway)
+        if not constrictor_mode and len(recent_moves) >= 3:
             last_3_moves = recent_moves[-3:]
             if last_3_moves.count(direction) >= 2:
                 # Penalize if this direction was used 2+ times in last 3 moves
@@ -2120,7 +2603,9 @@ def move(game_state: typing.Dict) -> typing.Dict:
         survival_evaluations = []
         my_length = len(game_state["you"]["body"])
 
-        for direction in ["up", "down", "left", "right"]:
+        # CRITICAL FIX: Only evaluate VALID moves, not all 4 directions!
+        # This prevents choosing wall moves in desperation
+        for direction in possible_moves:
             my_head = game_state["you"]["body"][0]
             new_head = {"x": my_head["x"], "y": my_head["y"]}
             if direction == "up":
@@ -2255,6 +2740,7 @@ def move(game_state: typing.Dict) -> typing.Dict:
 
         if not safe_found:
             print(f"   💀 NO SAFE MOVES FOUND! Will die this turn.")
+            print(f"   ⚠️  WARNING: Returning unsafe move as last resort!")
     else:
         print(f"   ✅ Move is safe!")
 
