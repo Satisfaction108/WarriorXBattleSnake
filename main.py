@@ -336,29 +336,29 @@ def get_opponent_threat_tiles(game_state: dict, my_length: int) -> tuple:
     """
     threat_tiles = set()
     pursue_tiles = set()
-    
+
     for snake in game_state["board"]["snakes"]:
         if snake["id"] == game_state["you"]["id"]:
             continue
-        
+
         opponent_head = snake["body"][0]
         opponent_length = len(snake["body"])
-        
+
         # Get all tiles opponent could move to
         opponent_neighbors = get_neighbors(opponent_head,
                                           game_state["board"]["width"],
                                           game_state["board"]["height"])
-        
+
         for neighbor in opponent_neighbors:
             tile = (neighbor["x"], neighbor["y"])
-            
+
             if opponent_length >= my_length:
                 # Opponent is bigger or equal - this tile is dangerous
                 threat_tiles.add(tile)
             else:
                 # Opponent is smaller - we can pursue them!
                 pursue_tiles.add(tile)
-    
+
     return (threat_tiles, pursue_tiles)
 
 
@@ -670,7 +670,7 @@ def prioritize_food(game_state: dict, position: dict) -> tuple:
     """
     Advanced food prioritization with opportunistic eating.
     Returns (should_seek_food, best_food, urgency_score, food_value_score).
-    
+
     Now considers:
     - Health urgency
     - Size advantage (grow to dominate)
@@ -768,25 +768,25 @@ def prioritize_food(game_state: dict, position: dict) -> tuple:
         growth_value = 100  # Base growth value
         if size_deficit > 0:
             growth_value += size_deficit * 50  # Extra value if we're smaller
-        
+
         urgency_value = urgency * 80  # Health urgency
-        
+
         proximity_value = max(0, 50 - path_dist * 5)  # Closer is better
-        
+
         escape_value = min(escape_space * 2, 100)  # Safe escape space
-        
+
         uncontested_bonus = 100 if we_are_closest else 0  # No competition
-        
+
         # Negative factors (costs)
         travel_cost = path_dist * 10  # Cost of travel
-        
+
         threat_penalty = opponent_threat * 80  # Competition penalty
-        
+
         danger_penalty = 200 if escape_space < 10 else 0  # Trapped after eating
-        
+
         # TOTAL VALUE = Benefits - Costs
-        food_value = (growth_value + urgency_value + proximity_value + 
-                     escape_value + uncontested_bonus - 
+        food_value = (growth_value + urgency_value + proximity_value +
+                     escape_value + uncontested_bonus -
                      travel_cost - threat_penalty - danger_penalty)
 
         if food_value > best_value:
@@ -1576,6 +1576,30 @@ def evaluate_move(direction: str, game_state: dict, use_prediction: bool = True)
         score += 10000
         reasons.append(f"🌊 PLENTY OF SPACE: {trap_analysis['available_space']} cells available")
 
+    # Additional global space heuristic: strongly avoid moves that give us
+    # almost no more room than our current length, even if they are not
+    # marked as an immediate trap. This is crucial near corners/edges
+    # with many snakes.
+    raw_space = trap_analysis["available_space"]
+    if not trap_analysis["is_dangerous"]:
+        if raw_space < my_length * 1.4:
+            tight_penalty = 60000
+            score -= tight_penalty
+            reasons.append(
+                f"💀 EXTREME SPACE TIGHTNESS: {raw_space} cells for length {my_length} (-{tight_penalty})"
+            )
+        elif raw_space < my_length * 2.0:
+            tight_penalty = 25000
+            score -= tight_penalty
+            reasons.append(
+                f"⚠️  LOW SPACE: {raw_space} cells for length {my_length} (-{tight_penalty})"
+            )
+        elif raw_space >= my_length * 4:
+            roomy_bonus = 12000
+            score += roomy_bonus
+            reasons.append(
+                f"🌌 HUGE SPACE: {raw_space} cells for length {my_length} (+{roomy_bonus})"
+            )
     # ========================================================================
     # PHASE 3: FOOD ACQUISITION - Eat or seek food
     # ========================================================================
@@ -1667,11 +1691,17 @@ def evaluate_move(direction: str, game_state: dict, use_prediction: bool = True)
                 safety_bonus = 2000 if food_safety["is_safe"] else 0  # Only pursue safe food when not urgent
                 urgency_bonus = urgency * 800
                 proximity_bonus = max(0, 150 - distance * 12)
-                
+
+                # Prefer central food in multi-snake standard games (safer positions)
+                center_x = board_width // 2
+                center_y = board_height // 2
+                dist_food_to_center = abs(food["x"] - center_x) + abs(food["y"] - center_y)
+                center_bonus_food = max(0, 300 - dist_food_to_center * 20)
+
                 # Only add growth bonus if food is safe OR we're desperate
                 growth_bonus = 500 if (food_safety["is_safe"] or urgency >= 8) else 0
 
-                food_score = safety_bonus + urgency_bonus + proximity_bonus + growth_bonus
+                food_score = safety_bonus + urgency_bonus + proximity_bonus + growth_bonus + center_bonus_food
 
                 if food_score > best_food_score:
                     best_food_score = food_score
@@ -1769,10 +1799,10 @@ def evaluate_move(direction: str, game_state: dict, use_prediction: bool = True)
     center_y = board_height // 2
     center = {"x": center_x, "y": center_y}
     dist_to_center = manhattan_distance(new_head, center)
-    
+
     # Center control becomes more important when we're bigger (can dominate)
     center_importance = min(my_length, 15) * 400  # Scales with snake length
-    
+
     # Reward being close to center - center control is crucial
     if dist_to_center == 0:
         # Perfect center position
@@ -1793,7 +1823,7 @@ def evaluate_move(direction: str, game_state: dict, use_prediction: bool = True)
         distance_penalty = 6000 + (dist_to_center * 500)
         score -= distance_penalty
         reasons.append(f"⚠️  FAR FROM CENTER: Poor positioning (-{distance_penalty})")
-    
+
     # Extra bonus for moving toward center when far away (unless chasing food)
     if not eating_food and dist_to_center > 4:
         current_center_dist = manhattan_distance(my_head, center)
@@ -1936,6 +1966,35 @@ def evaluate_move(direction: str, game_state: dict, use_prediction: bool = True)
         multi_danger_penalty = 20000 * dangerous_neighbors
         score -= multi_danger_penalty
         reasons.append(f"💀 MULTI-SNAKE PRESSURE: {dangerous_neighbors} larger/equal heads nearby (-{multi_danger_penalty})")
+
+    # Strongly penalize being on/near the wall while dangerous heads are close (squeeze risk)
+    if (is_edge or near_edge or is_corner) and dangerous_neighbors > 0:
+        low_space = trap_analysis["available_space"] < my_length * 2
+
+        if is_corner:
+            base_squeeze = 70000
+        elif is_edge:
+            base_squeeze = 50000
+        else:
+            base_squeeze = 30000
+
+        squeeze_penalty = base_squeeze + 20000 * dangerous_neighbors
+        if low_space:
+            squeeze_penalty += 40000
+
+        score -= squeeze_penalty
+        """
+
+        reasons.append(
+            f" "); SQUEEZE RISK NEAR WALL: {dangerous_neighbors} dangerous heads, "
+            f"space={trap_analysis['available_space']} (-{squeeze_penalty})"
+        )
+        """
+        reasons.append(
+            f" SQUEEZE RISK NEAR WALL: {dangerous_neighbors} dangerous heads, "
+            f"space={trap_analysis['available_space']} (-{squeeze_penalty})"
+        )
+
 
     # Give extra bonus if we found a great trapping opportunity
     if best_trap_opportunity and best_trap_value > 50000:
@@ -2111,6 +2170,51 @@ def calculate_reachable_space_constrictor(pos: dict, game_state: dict, max_depth
         "is_isolated": len(visited) < 10,  # Less than 10 cells = isolated
         "cells": visited
     }
+
+
+def calculate_space_with_extra_block_constrictor(pos: dict, game_state: dict, extra_block: tuple, max_depth: int = 100) -> int:
+    """\
+    Helper: like calculate_reachable_space_constrictor, but treat extra_block (x,y) as occupied.
+    Used for pocket-detection when evaluating constrictor moves.
+    """
+    board_width = game_state["board"]["width"]
+    board_height = game_state["board"]["height"]
+
+    occupied = set()
+    for snake in game_state["board"]["snakes"]:
+        for segment in snake["body"]:
+            occupied.add((segment["x"], segment["y"]))
+
+    # Add hypothetical new head as blocked cell
+    occupied.add(extra_block)
+
+    if (pos["x"], pos["y"]) in occupied:
+        return 0
+
+    visited = set()
+    queue = deque([pos])
+    visited.add((pos["x"], pos["y"]))
+
+    cells_explored = 0
+
+    while queue and cells_explored < max_depth:
+        current = queue.popleft()
+        cells_explored += 1
+
+        for dx, dy in [(0, 1), (0, -1), (1, 0), (-1, 0)]:
+            nx, ny = current["x"] + dx, current["y"] + dy
+
+            if not (0 <= nx < board_width and 0 <= ny < board_height):
+                continue
+
+            if (nx, ny) in visited or (nx, ny) in occupied:
+                continue
+
+            visited.add((nx, ny))
+            queue.append({"x": nx, "y": ny})
+
+    return len(visited)
+
 
 
 def detect_self_trap_constrictor(new_head: dict, game_state: dict, lookahead: int = 5) -> dict:
@@ -2426,7 +2530,7 @@ def evaluate_move_constrictor(direction: str, game_state: dict) -> dict:
             reasons.append(f"🚧 BLOCKING OPPONENT: Cutting off their best moves (+{blocking_value})")
 
     # ========================================================================
-    # PHASE 4: CENTER CONTROL - MAXIMIZE OPTIONS
+    # PHASE 4: CENTER CONTROL & SIDE FOCUS - MAXIMIZE OPTIONS
     # ========================================================================
 
     center_value = find_center_control_value(new_head, board_width, board_height)
@@ -2436,6 +2540,29 @@ def evaluate_move_constrictor(direction: str, game_state: dict) -> dict:
         reasons.append(f"👑 CENTER CONTROL: Dominating center (+{center_value})")
     elif center_value > 40000:
         reasons.append(f"📍 GOOD POSITION: Near center (+{center_value})")
+
+    # SIDE FOCUS: Prefer fully claiming one half of the board before crossing
+    total_cells = board_width * board_height
+
+    if board_width >= board_height:
+        # Left / right halves
+        center_line = board_width / 2.0
+        home_sign = -1 if my_head["x"] < center_line else 1
+        new_sign = -1 if new_head["x"] < center_line else 1
+    else:
+        # Top / bottom halves
+        center_line = board_height / 2.0
+        home_sign = -1 if my_head["y"] < center_line else 1
+        new_sign = -1 if new_head["y"] < center_line else 1
+
+    staying_in_home = (new_sign == home_sign)
+    ample_space = trap_analysis["reachable_space"] > max(my_length * 2, total_cells * 0.4)
+
+    if ample_space and not staying_in_home:
+        # We are crossing to the other side while our current side still has plenty of space
+        side_drift_penalty = 180000
+        score -= side_drift_penalty
+        reasons.append(f"⬅️➡️ SIDE FOCUS: Leaving strong home side too early (-{side_drift_penalty})")
 
     # ========================================================================
     # PHASE 5: AVOID EDGES - EDGES ARE DEATH IN CONSTRICTOR MODE!
@@ -2456,29 +2583,64 @@ def evaluate_move_constrictor(direction: str, game_state: dict) -> dict:
         reasons.append(f"⚠️  EDGE: Very dangerous in constrictor (-{edge_penalty})")
 
     # ========================================================================
-    # PHASE 6: SPACE EFFICIENCY - PREFER MOVES THAT DON'T WASTE SPACE
+    # PHASE 6: SPACE EFFICIENCY & POCKET AVOIDANCE
     # ========================================================================
 
-    # Count how many adjacent cells are already occupied
+    # Count how many adjacent cells are already occupied (local dead-end heuristic)
     adjacent_occupied = 0
     for dx, dy in [(0, 1), (0, -1), (1, 0), (-1, 0)]:
         check_x, check_y = new_head["x"] + dx, new_head["y"] + dy
         if not (0 <= check_x < board_width and 0 <= check_y < board_height):
             continue
 
-        # Check if this cell is occupied by any snake
         for snake in game_state["board"]["snakes"]:
             for segment in snake["body"]:
                 if segment["x"] == check_x and segment["y"] == check_y:
                     adjacent_occupied += 1
                     break
 
-    # Prefer moves that don't create isolated pockets
     if adjacent_occupied >= 3:
-        # This move creates a dead-end or pocket - BAD!
         pocket_penalty = 300000
         score -= pocket_penalty
-        reasons.append(f"⚠️  CREATING POCKET: {adjacent_occupied} sides blocked (-{pocket_penalty})")
+        reasons.append(f"⚠️  CREATING TIGHT CORNER: {adjacent_occupied} sides blocked (-{pocket_penalty})")
+
+    # GLOBAL POCKET CHECK: avoid creating tiny isolated regions we can't use
+    new_head_block = (new_head["x"], new_head["y"])
+    tiny_pocket_total = 0
+
+    for dx, dy in [(0, 1), (0, -1), (1, 0), (-1, 0)]:
+        nb_x, nb_y = new_head["x"] + dx, new_head["y"] + dy
+        if not (0 <= nb_x < board_width and 0 <= nb_y < board_height):
+            continue
+
+        # Skip our own head position (we're moving there)
+        if nb_x == my_head["x"] and nb_y == my_head["y"]:
+            continue
+
+        # Skip currently occupied cells
+        occupied_here = False
+        for snake in game_state["board"]["snakes"]:
+            for segment in snake["body"]:
+                if segment["x"] == nb_x and segment["y"] == nb_y:
+                    occupied_here = True
+                    break
+            if occupied_here:
+                break
+        if occupied_here:
+            continue
+
+        # Estimate how much space this neighbor would have if our new_head were blocked
+        pocket_size = calculate_space_with_extra_block_constrictor({"x": nb_x, "y": nb_y}, game_state, new_head_block, max_depth=80)
+
+        # Very small pockets (1-3 cells) are almost unusable and usually reduce total future space
+        if 0 < pocket_size <= 3:
+            tiny_pocket_total += pocket_size
+
+    if tiny_pocket_total > 0:
+        # Penalize proportional to total tiny pocket cells we are sealing off
+        pocket_loss_penalty = 120000 * tiny_pocket_total
+        score -= pocket_loss_penalty
+        reasons.append(f"⚠️  SEALING TINY POCKETS: losing {tiny_pocket_total} cells (-{pocket_loss_penalty})")
 
     return {"score": score, "reasons": reasons, "direction": direction}
 
